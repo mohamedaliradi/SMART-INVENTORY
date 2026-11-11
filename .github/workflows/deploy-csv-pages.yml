@@ -1,7 +1,7 @@
 name: Deploy SMART INVENTORY CSV edition to GitHub Pages
 on:
   push:
-    branches: [github-csv-edition]
+    branches: [main]
     paths:
       - 'docs/**'
       - '.github/workflows/deploy-csv-pages.yml'
