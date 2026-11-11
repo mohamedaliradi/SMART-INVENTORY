@@ -97,7 +97,7 @@ def sw(): return FileResponse(STATIC/'sw.js',media_type='application/javascript'
 
 @app.post('/api/login')
 def login(x:Login):
- c=db(); r=c.execute('SELECT * FROM users WHERE username=? AND active=1',(x.username,)).fetchone()
+ c=db(); r=c.execute('SELECT * FROM users WHERE username=? AND active=TRUE',(x.username,)).fetchone()
  if not r or not pw_ok(x.password,r['password_hash']): c.close(); raise HTTPException(401,'اسم المستخدم أو كلمة المرور غير صحيحة')
  token=secrets.token_urlsafe(36); c.execute('INSERT INTO tokens VALUES(?,?,?)',(token,r['id'],datetime.now().isoformat())); audit(c,r['id'],'login'); c.commit(); c.close()
  return {'token':token,'user':{'id':r['id'],'username':r['username'],'full_name':r['full_name'],'role':r['role']}}
@@ -108,7 +108,7 @@ def logout(u=Depends(current),authorization:str=Header()):
 def me(u=Depends(current)): return {'id':u['id'],'username':u['username'],'full_name':u['full_name'],'role':u['role']}
 @app.get('/api/dashboard')
 def dashboard(u=Depends(current)):
- c=db(); d={'users':c.execute('SELECT count(*) n FROM users WHERE active=1').fetchone()['n'],'sessions':c.execute('SELECT count(*) n FROM sessions').fetchone()['n'],'catalog':c.execute('SELECT count(*) n FROM catalog').fetchone()['n'],'open_sessions':c.execute("SELECT count(*) n FROM sessions WHERE status='open'").fetchone()['n']}; c.close(); return d
+ c=db(); d={'users':c.execute('SELECT count(*) n FROM users WHERE active=TRUE').fetchone()['n'],'sessions':c.execute('SELECT count(*) n FROM sessions').fetchone()['n'],'catalog':c.execute('SELECT count(*) n FROM catalog').fetchone()['n'],'open_sessions':c.execute("SELECT count(*) n FROM sessions WHERE status='open'").fetchone()['n']}; c.close(); return d
 @app.get('/api/users')
 def users(u=Depends(current)):
  admin(u); c=db(); rows=[dict(x) for x in c.execute('SELECT id,username,full_name,role,active,created_at FROM users ORDER BY id')]; c.close(); return rows
@@ -128,7 +128,7 @@ def catalog(q:str='',u=Depends(current)):
 def add_catalog(x:CatalogIn,u=Depends(current)):
  c=db()
  try: c.execute('INSERT INTO catalog(code,barcode,name,unit,price) VALUES(?,?,?,?,?)',(x.code,x.barcode,x.name,x.unit,x.price)); c.commit()
- except sqlite3.IntegrityError: c.close(); raise HTTPException(409,'كود الصنف موجود بالفعل')
+ except psycopg.IntegrityError: c.close(); raise HTTPException(409,'كود الصنف موجود بالفعل')
  c.close(); return {'ok':True}
 @app.post('/api/sessions')
 def new_session(x:SessionIn,u=Depends(current)):
