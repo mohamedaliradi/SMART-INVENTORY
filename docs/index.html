@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#123b5d"><meta name="description" content="SMART INVENTORY - نسخة محلية تعتمد على CSV">
+<link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./style.css">
+<title>SMART INVENTORY – نظام الجرد الذكي</title>
+</head>
+<body>
+<header><div><h1>SMART INVENTORY</h1><p>نظام الجرد الذكي · إصدار GitHub + CSV التجريبي</p></div><span id="connection">يعمل محلياً على هذا الجهاز</span></header>
+<main>
+<section class="notice"><b>تنبيه مهم:</b> هذه نسخة تجريبية بلا سيرفر. تحفظ الإدخالات داخل متصفح الجهاز فقط، ولا ترسلها تلقائياً إلى GitHub أو إلى أجهزة الموظفين الأخرى. استخدم تصدير CSV لتجميع النتائج يدوياً.</section>
+<section class="panel">
+<h2>جلسة الجرد</h2>
+<div class="grid"><label>اسم الفرع / المخزن<input id="branch" placeholder="مثال: فرع القاهرة"></label><label>اسم الموظف<input id="employee" placeholder="اسم القائم بالجرد"></label></div>
+<div class="actions"><button id="saveSession">حفظ بيانات الجلسة</button><button class="secondary" id="clearLocal">مسح بيانات هذا المتصفح</button></div>
+</section>
+<section class="panel">
+<h2>إضافة صنف للجرد</h2>
+<div class="grid">
+<label>كود الصنف / الباركود<input id="code" autocomplete="off" placeholder="امسح الباركود أو اكتب الكود"></label>
+<label>اسم الصنف<input id="name" placeholder="اسم الصنف"></label>
+<label>الكمية المجردة<input id="qty" type="number" step="any" value="1"></label>
+<label>سعر الوحدة<input id="price" type="number" step="any" min="0" value="0"></label>
+<label>تاريخ الصلاحية<input id="expiry" type="date"></label>
+</div>
+<div class="actions"><button id="addItem">إضافة وتسجيل</button><button class="secondary" id="clearForm">تفريغ الحقول</button></div>
+</section>
+<section class="panel">
+<div class="section-head"><h2>الأصناف المسجلة</h2><input id="search" placeholder="بحث بالكود أو الاسم"></div>
+<div class="stats"><span>عدد التسجيلات: <b id="count">0</b></span><span>إجمالي الكميات: <b id="total">0</b></span></div>
+<div class="table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>الكمية</th><th>السعر</th><th>الصلاحية</th><th>الموظف</th><th></th></tr></thead><tbody id="rows"><tr><td colspan="7">لا توجد تسجيلات بعد</td></tr></tbody></table></div>
+<div class="actions"><button id="exportCsv">تصدير نتائج الجرد CSV</button><label class="file-button">استيراد CSV<input id="importCsv" type="file" accept=".csv,text/csv"></label><button class="secondary" id="downloadCatalog">تنزيل ملف الأصناف الأساسي</button></div>
+</section>
+<footer>SMART INVENTORY · البيانات تحفظ محلياً في المتصفح باستخدام IndexedDB.</footer>
+</main>
+<script src="./app.js"></script>
+</body></html>
