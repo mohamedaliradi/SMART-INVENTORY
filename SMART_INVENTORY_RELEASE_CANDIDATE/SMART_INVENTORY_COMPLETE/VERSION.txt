@@ -1,0 +1,4 @@
+SMART INVENTORY
+Release candidate: 0.2.0
+Build date: 2026-11-11
+Status: Tested development package; not production-certified for 30+ concurrent users or public internet access.
