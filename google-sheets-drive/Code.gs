@@ -33,7 +33,7 @@ function setupDatabase() {
     APP_CONFIG.SHEETS.forEach(d => {
       let sh = ss.getSheetByName(d.name);
       if (!sh) sh = ss.insertSheet(d.name);
-      if (sh.getLastRow() === 0) { sh.getRange(1,1,1,d.headers.length).setValues([d.headers]); sh.setFrozenRows(1); }
+      if (sh.getLastRow() <= 1) { sh.getRange(1,1,1,d.headers.length).setValues([d.headers]); sh.setFrozenRows(1); } else { const existing=sh.getRange(1,1,1,d.headers.length).getValues()[0]; if (d.headers.some((h,i)=>existing[i]!==h)) throw new Error('تعارض في أعمدة '+d.name+'؛ أوقفنا الإعداد لحماية البيانات الموجودة.'); }
     });
     const blank = ss.getSheetByName('Sheet1');
     if (blank && ss.getSheets().length > APP_CONFIG.SHEETS.length) ss.deleteSheet(blank);
@@ -100,6 +100,8 @@ function changePassword(token,currentPassword,newPassword) {
   const salt=randomToken_(), sh=db_().getSheetByName('Users');
   sh.getRange(u.row,3,1,2).setValues([[passwordHash_(newPassword,salt),salt]]);
   sh.getRange(u.row,7).setValue(false); sh.getRange(u.row,9).setValue(new Date());
+  const updated={username:s.username,role:s.role,mustChange:false,issued:s.issued};
+  CacheService.getScriptCache().put('session_'+token,JSON.stringify(updated),APP_CONFIG.SESSION_TTL_SECONDS);
   audit_(s.username,'CHANGE_PASSWORD','Users',u.id,''); return {ok:true};
 }
 function requireRole_(s,roles) { if(roles.indexOf(s.role)<0) throw new Error('ليس لديك صلاحية لتنفيذ هذه العملية.'); }
