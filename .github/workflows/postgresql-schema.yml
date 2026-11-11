@@ -1,0 +1,55 @@
+name: PostgreSQL schema validation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [postgres-migration-phase-1]
+
+jobs:
+  validate-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: smart_inventory
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: smart_inventory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smart_inventory -d smart_inventory_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Apply initial schema
+        env:
+          PGPASSWORD: ci_only_password
+        run: |
+          psql -h localhost -U smart_inventory -d smart_inventory_test -v ON_ERROR_STOP=1 \
+            -f SMART_INVENTORY_RELEASE_CANDIDATE/SMART_INVENTORY_COMPLETE/backend/migrations/001_initial_postgresql.sql
+      - name: Verify required tables
+        env:
+          PGPASSWORD: ci_only_password
+        run: |
+          psql -h localhost -U smart_inventory -d smart_inventory_test -v ON_ERROR_STOP=1 -c "
+          DO \\$\\$
+          DECLARE missing_count integer;
+          BEGIN
+            SELECT count(*) INTO missing_count
+            FROM (VALUES ('users'), ('branches'), ('sessions'), ('catalog'),
+                         ('items'), ('audit'), ('tokens'), ('sync_events')) AS required(name)
+            WHERE to_regclass(required.name) IS NULL;
+            IF missing_count <> 0 THEN
+              RAISE EXCEPTION 'Missing % required tables', missing_count;
+            END IF;
+          END
+          \\$\\$;"
