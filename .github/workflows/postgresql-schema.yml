@@ -40,15 +40,5 @@ jobs:
         env:
           PGPASSWORD: ci_only_password
         run: |
-          psql -h localhost -U smart_inventory -d smart_inventory_test -v ON_ERROR_STOP=1 -c 'DO $$
-          DECLARE missing_count integer;
-          BEGIN
-            SELECT count(*) INTO missing_count
-            FROM (VALUES ('users'), ('branches'), ('sessions'), ('catalog'),
-                         ('items'), ('audit'), ('tokens'), ('sync_events')) AS required(name)
-            WHERE to_regclass(required.name) IS NULL;
-            IF missing_count <> 0 THEN
-              RAISE EXCEPTION 'Missing % required tables', missing_count;
-            END IF;
-          END
-          $$;'
+          count=$(psql -h localhost -U smart_inventory -d smart_inventory_test -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('users','branches','sessions','catalog','items','audit','tokens','sync_events')")
+          test "$count" = "8"
