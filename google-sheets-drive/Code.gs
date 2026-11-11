@@ -62,10 +62,15 @@ function randomToken_() { return Utilities.getUuid().replace(/-/g,'') + Utilitie
 function bytesToHex_(bytes) { return bytes.map(b => ('0'+((b+256)%256).toString(16)).slice(-2)).join(''); }
 function hmac_(key, message) { return Utilities.computeHmacSha256Signature(message, key); }
 function passwordHash_(password, salt) {
+  // PBKDF2-HMAC-SHA256, one 256-bit block.
   const iterations = APP_CONFIG.PBKDF2_ITERATIONS;
-  let u = hmac_(salt, String(password) + '\u0001');
+  const block = Utilities.newBlob(salt).getBytes().concat([0,0,0,1]);
+  let u = hmac_(String(password), block);
   let out = u.slice();
-  for (let i=1;i<iterations;i++) { u = hmac_(salt,u); for(let j=0;j<out.length;j++) out[j] = (out[j] ^ u[j]); }
+  for (let i=1;i<iterations;i++) {
+    u = hmac_(String(password),u);
+    for(let j=0;j<out.length;j++) out[j] = out[j] ^ u[j];
+  }
   return bytesToHex_(out);
 }
 function userRows_() {
