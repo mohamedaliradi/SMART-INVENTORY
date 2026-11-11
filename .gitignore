@@ -1,0 +1,29 @@
+# Python artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local data
+*.db
+*.sqlite
+*.sqlite3
+backup/
+backups/
+*.bak
+
+# Secrets
+.env
+.env.*
+admin_setup.json
+*.pem
+*.key
+secrets/
+
+# Logs and editor/OS files
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
