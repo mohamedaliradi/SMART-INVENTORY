@@ -2,9 +2,9 @@ name: PostgreSQL schema validation
 
 on:
   pull_request:
-    branches: [postgres-app-migration-phase-2]
-  push:
     branches: [postgres-migration-phase-1]
+  push:
+    branches: [postgres-app-migration-phase-2]
 
 jobs:
   validate-schema:
