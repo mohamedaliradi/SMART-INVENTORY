@@ -1,0 +1,30 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+backup/
+backups/
+*.bak
+
+# Secrets and local configuration
+.env
+.env.*
+admin_setup.json
+*.pem
+*.key
+secrets/
+
+# Logs and OS/editor files
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
