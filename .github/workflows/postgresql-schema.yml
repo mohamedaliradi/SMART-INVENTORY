@@ -40,8 +40,7 @@ jobs:
         env:
           PGPASSWORD: ci_only_password
         run: |
-          psql -h localhost -U smart_inventory -d smart_inventory_test -v ON_ERROR_STOP=1 -c "
-          DO \\$\\$
+          psql -h localhost -U smart_inventory -d smart_inventory_test -v ON_ERROR_STOP=1 -c 'DO $$
           DECLARE missing_count integer;
           BEGIN
             SELECT count(*) INTO missing_count
@@ -52,4 +51,4 @@ jobs:
               RAISE EXCEPTION 'Missing % required tables', missing_count;
             END IF;
           END
-          \\$\\$;"
+          $$;'
