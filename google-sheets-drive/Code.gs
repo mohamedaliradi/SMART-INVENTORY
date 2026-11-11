@@ -60,7 +60,12 @@ function doGet() {
 }
 function randomToken_() { return Utilities.getUuid().replace(/-/g,'') + Utilities.getUuid().replace(/-/g,''); }
 function bytesToHex_(bytes) { return bytes.map(b => ('0'+((b+256)%256).toString(16)).slice(-2)).join(''); }
-function hmac_(key, message) { return Utilities.computeHmacSha256Signature(message, key); }
+function hmac_(key, message) {
+  // Apps Script requires matching byte-array overloads when the message is bytes.
+  const keyBytes = Array.isArray(key) ? key : Utilities.newBlob(String(key)).getBytes();
+  const messageBytes = Array.isArray(message) ? message : Utilities.newBlob(String(message)).getBytes();
+  return Utilities.computeHmacSha256Signature(messageBytes, keyBytes);
+}
 function passwordHash_(password, salt) {
   // PBKDF2-HMAC-SHA256, one 256-bit block.
   const iterations = APP_CONFIG.PBKDF2_ITERATIONS;
