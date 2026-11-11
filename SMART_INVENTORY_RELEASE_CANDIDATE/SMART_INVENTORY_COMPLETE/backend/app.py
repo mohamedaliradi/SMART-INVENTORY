@@ -3,30 +3,51 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pathlib import Path
-import sqlite3, hashlib, secrets, os, io, csv, json, math
+import hashlib, secrets, os, io, csv, json, math, re
+import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime, date
 from openpyxl import load_workbook, Workbook
 
 BASE=Path(__file__).resolve().parent
-DB=BASE/'smart_inventory.db'
+DB_URL=os.getenv('DATABASE_URL','').strip()
 STATIC=BASE/'static'
 app=FastAPI(title='SMART INVENTORY')
 app.mount('/static',StaticFiles(directory=STATIC),name='static')
 
+class PGConnection:
+ def __init__(self, connection): self.connection=connection
+ def execute(self, sql, params=()):
+  sql=sql.strip()
+  if sql.upper().startswith('PRAGMA '): return self.connection.execute('SELECT 1')
+  if 'last_insert_rowid()' in sql.lower(): sql='SELECT lastval() AS n'
+  if sql.upper().startswith('INSERT OR REPLACE INTO ITEMS'):
+   m=re.match(r'INSERT OR REPLACE INTO items\s*\(([^)]+)\)\s*(.*)',sql,re.I|re.S)
+   if m:
+    cols=[x.strip() for x in m.group(1).split(',')]
+    updates=[f'{x}=EXCLUDED.{x}' for x in cols if x not in ('session_id','code')]
+    sql=f"INSERT INTO items ({', '.join(cols)}) {m.group(2)} ON CONFLICT (session_id, code) DO UPDATE SET {', '.join(updates)}"
+  sql=sql.replace('?','%s')
+  return self.connection.execute(sql,params)
+ def commit(self): return self.connection.commit()
+ def rollback(self): return self.connection.rollback()
+ def close(self): return self.connection.close()
+
 def db():
- c=sqlite3.connect(DB, timeout=30); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('PRAGMA busy_timeout=30000'); return c
+ if not DB_URL: raise RuntimeError('DATABASE_URL is required; configure a PostgreSQL connection string.')
+ return PGConnection(psycopg.connect(DB_URL,row_factory=dict_row))
 
 def init():
- c=db(); c.executescript('''
- CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, full_name TEXT, password_hash TEXT NOT NULL, role TEXT DEFAULT 'employee', active INTEGER DEFAULT 1, created_at TEXT);
- CREATE TABLE IF NOT EXISTS branches(id INTEGER PRIMARY KEY, code TEXT, name TEXT, created_at TEXT);
- CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY, branch_id INTEGER, title TEXT, mode TEXT, status TEXT DEFAULT 'open', created_by INTEGER, created_at TEXT, FOREIGN KEY(branch_id) REFERENCES branches(id));
- CREATE TABLE IF NOT EXISTS catalog(id INTEGER PRIMARY KEY, code TEXT UNIQUE, barcode TEXT, name TEXT, unit TEXT DEFAULT 'قطعة', price REAL DEFAULT 0);
- CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY, session_id INTEGER, code TEXT, barcode TEXT, name TEXT, book_qty REAL DEFAULT 0, price REAL DEFAULT 0, counted_qty REAL, expiry TEXT, counted_by INTEGER, counted_at TEXT, UNIQUE(session_id,code), FOREIGN KEY(session_id) REFERENCES sessions(id));
- CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at TEXT);
- CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, user_id INTEGER, created_at TEXT);
- CREATE TABLE IF NOT EXISTS sync_events(client_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, session_id INTEGER NOT NULL, item_code TEXT NOT NULL, created_at TEXT NOT NULL, result_json TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(session_id) REFERENCES sessions(id));
- '''); c.commit(); c.close()
+ migration=BASE/'migrations'/'001_initial_postgresql.sql'
+ if not migration.exists(): raise RuntimeError(f'PostgreSQL migration not found: {migration}')
+ c=db()
+ try:
+  for statement in migration.read_text(encoding='utf-8').split(';'):
+   if statement.strip(): c.execute(statement)
+  c.commit()
+ except Exception:
+  c.rollback(); raise
+ finally: c.close()
 
 def pw_hash(p):
  salt=secrets.token_hex(16); h=hashlib.pbkdf2_hmac('sha256',p.encode(),salt.encode(),240000).hex(); return salt+'$'+h
@@ -60,7 +81,7 @@ class CatalogIn(BaseModel): code:str; name:str; barcode:str=''; unit:str='قطع
 
 async def current(authorization:str|None=Header(default=None)):
  if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401,'يلزم تسجيل الدخول')
- token=authorization[7:]; c=db(); r=c.execute('SELECT u.* FROM tokens t JOIN users u ON u.id=t.user_id WHERE t.token=? AND u.active=1',(token,)).fetchone(); c.close()
+ token=authorization[7:]; c=db(); r=c.execute('SELECT u.* FROM tokens t JOIN users u ON u.id=t.user_id WHERE t.token=? AND u.active=TRUE',(token,)).fetchone(); c.close()
  if not r: raise HTTPException(401,'انتهت الجلسة، سجل الدخول مرة أخرى')
  return dict(r)
 
@@ -95,11 +116,11 @@ def users(u=Depends(current)):
 def add_user(x:UserIn,u=Depends(current)):
  admin(u); c=db()
  try: c.execute('INSERT INTO users(username,full_name,password_hash,role,created_at) VALUES(?,?,?,?,?)',(x.username,x.full_name,pw_hash(x.password),x.role,datetime.now().isoformat())); audit(c,u['id'],'create_user',x.username); c.commit()
- except sqlite3.IntegrityError: c.close(); raise HTTPException(409,'اسم المستخدم مستخدم بالفعل')
+ except psycopg.IntegrityError: c.close(); raise HTTPException(409,'اسم المستخدم مستخدم بالفعل')
  c.close(); return {'ok':True}
 @app.post('/api/users/{uid}/toggle')
 def toggle_user(uid:int,u=Depends(current)):
- admin(u); c=db(); c.execute('UPDATE users SET active=1-active WHERE id=? AND id<>?',(uid,u['id'])); c.commit(); c.close(); return {'ok':True}
+ admin(u); c=db(); c.execute('UPDATE users SET active=NOT active WHERE id=? AND id<>?',(uid,u['id'])); c.commit(); c.close(); return {'ok':True}
 @app.get('/api/catalog')
 def catalog(q:str='',u=Depends(current)):
  c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM catalog WHERE code LIKE ? OR name LIKE ? OR barcode LIKE ? ORDER BY name LIMIT 250',(f'%{q}%',f'%{q}%',f'%{q}%'))]; c.close(); return rows
@@ -111,8 +132,8 @@ def add_catalog(x:CatalogIn,u=Depends(current)):
  c.close(); return {'ok':True}
 @app.post('/api/sessions')
 def new_session(x:SessionIn,u=Depends(current)):
- c=db(); cur=c.execute('INSERT INTO branches(code,name,created_at) VALUES(?,?,?)',(x.branch_code,x.branch_name,datetime.now().isoformat())); bid=cur.lastrowid
- cur=c.execute('INSERT INTO sessions(branch_id,title,mode,created_by,created_at) VALUES(?,?,?,?,?)',(bid,x.title or x.branch_name,x.mode,u['id'],datetime.now().isoformat())); sid=cur.lastrowid; audit(c,u['id'],'create_session',str(sid)); c.commit(); c.close(); return {'id':sid}
+ c=db(); cur=c.execute('INSERT INTO branches(code,name,created_at) VALUES(?,?,?) RETURNING id',(x.branch_code,x.branch_name,datetime.now().isoformat())); bid=cur.fetchone()['id']
+ cur=c.execute('INSERT INTO sessions(branch_id,title,mode,created_by,created_at) VALUES(?,?,?,?,?) RETURNING id',(bid,x.title or x.branch_name,x.mode,u['id'],datetime.now().isoformat())); sid=cur.fetchone()['id']; audit(c,u['id'],'create_session',str(sid)); c.commit(); c.close(); return {'id':sid}
 @app.get('/api/sessions')
 def sessions(u=Depends(current)):
  c=db(); rows=[dict(x) for x in c.execute('SELECT s.*,b.code branch_code,b.name branch_name,(SELECT count(*) FROM items i WHERE i.session_id=s.id) total,(SELECT count(*) FROM items i WHERE i.session_id=s.id AND i.counted_qty IS NOT NULL) counted FROM sessions s JOIN branches b ON b.id=s.branch_id ORDER BY s.id DESC')]; c.close(); return rows
@@ -158,7 +179,7 @@ def count_item(sid:int,x:CountIn,u=Depends(current)):
  if r:
   c.execute('UPDATE items SET counted_qty=?,expiry=?,counted_by=?,counted_at=? WHERE id=?',(x.qty,x.expiry,u['id'],datetime.now().isoformat(),r['id'])); iid=r['id']
  else:
-  c.execute('INSERT INTO items(session_id,code,barcode,name,book_qty,price,counted_qty,expiry,counted_by,counted_at) VALUES(?,?,?,?,0,?,?,?,?,?)',(sid,x.code,x.barcode or x.code,x.name,x.price,x.qty,x.expiry,u['id'],datetime.now().isoformat())); iid=c.execute('SELECT last_insert_rowid() n').fetchone()['n']
+  c.execute('INSERT INTO items(session_id,code,barcode,name,book_qty,price,counted_qty,expiry,counted_by,counted_at) VALUES(?,?,?,?,0,?,?,?,?,?)',(sid,x.code,x.barcode or x.code,x.name,x.price,x.qty,x.expiry,u['id'],datetime.now().isoformat())); iid=c.execute('SELECT lastval() n').fetchone()['n']
  audit(c,u['id'],'count',f'session={sid}; code={x.code}; qty={x.qty}'); c.commit(); c.close(); return {'ok':True,'id':iid}
 @app.post('/api/sync')
 def sync(payload:list[dict],u=Depends(current)):
