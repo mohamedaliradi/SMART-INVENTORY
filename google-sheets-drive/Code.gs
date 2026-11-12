@@ -191,11 +191,12 @@ function adminImportItems(token,items) {
   try {
     const values=sh.getDataRange().getValues(), index={};
     values.slice(1).forEach((r,i)=>{const k=String(r[2]||'').trim().toLowerCase();if(k)index[k]=i+1;});
-    let added=0,updated=0,skipped=0;
+    let added=0,updated=0,skipped=0; const seen={};
     items.forEach(item=>{
       const code=String(item.code||'').trim(), name=String(item.name||'').trim();
       if(!code || !name){skipped++;return;}
-      const key=code.toLowerCase(), oldRow=index[key];
+      const key=code.toLowerCase(); if(seen[key]){skipped++;return;} seen[key]=true;
+      const oldRow=index[key];
       const old=oldRow?values[oldRow]:[];
       const row=[oldRow?old[0]:Utilities.getUuid(),
         String(item.barcode|| (old[1]||'')).trim(),code,name,
