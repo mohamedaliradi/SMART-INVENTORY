@@ -126,7 +126,7 @@ function saveCount(token,data) {
   const s=session_(token); requireRole_(s,['admin','supervisor','employee']); if(s.mustChange) throw new Error('يجب تغيير كلمة المرور أولاً.');
   data=data||{}; const code=String(data.code||'').trim(), name=String(data.name||'').trim(), branch=String(data.branch||'').trim();
   const qty=Number(data.qty), price=Number(data.price||0);
-  if(!code||!name||!branch||!Number.isFinite(qty)||qty<0||!Number.isFinite(price)||price<0) throw new Error('راجع الكود والاسم والفرع والكمية والسعر.');
+  if(!code||!name||!branch||!Number.isFinite(qty)||!Number.isFinite(price)||price<0) throw new Error('راجع الكود والاسم والفرع والكمية والسعر.');
   const lock=LockService.getScriptLock(); lock.waitLock(20000);
   try {
     const sh=db_().getSheetByName('InventoryLines');
