@@ -162,3 +162,50 @@ function adminSetUserActive(token,userId,active) {
   db_().getSheetByName('Users').getRange(u.row,6).setValue(Boolean(active));
   audit_(s.username,active?'ENABLE_USER':'DISABLE_USER','Users',userId,''); return {ok:true};
 }
+
+
+/** Master catalog: non-destructive upsert by item code. */
+function listCatalog(token) {
+  session_(token);
+  const rows=db_().getSheetByName('Items').getDataRange().getValues().slice(1);
+  return rows.filter(r=>r[0] && (r[6]===true || String(r[6]).toLowerCase()==='true'))
+    .map(r=>({id:String(r[0]),barcode:String(r[1]||''),code:String(r[2]||''),name:String(r[3]||''),unit:String(r[4]||''),category:String(r[5]||'')}));
+}
+function adminSaveItem(token,item) {
+  const s=session_(token); requireRole_(s,['admin']);
+  item=item||{};
+  const code=String(item.code||'').trim(), name=String(item.name||'').trim();
+  if(!code || !name) throw new Error('كود الصنف واسمه مطلوبان.');
+  const sh=db_().getSheetByName('Items'), values=sh.getDataRange().getValues();
+  const idx=values.findIndex((r,i)=>i>0 && String(r[2]||'').trim().toLowerCase()===code.toLowerCase());
+  const row=[idx>0?values[idx][0]:Utilities.getUuid(),String(item.barcode||'').trim(),code,name,String(item.unit||'').trim(),String(item.category||'').trim(),true,new Date()];
+  if(idx>0) sh.getRange(idx+1,1,1,row.length).setValues([row]); else sh.appendRow(row);
+  audit_(s.username,idx>0?'UPDATE':'CREATE','Items',row[0],'code='+code);
+  return {ok:true,updated:idx>0};
+}
+function adminImportItems(token,items) {
+  const s=session_(token); requireRole_(s,['admin']);
+  if(!Array.isArray(items) || !items.length) throw new Error('لم يتم العثور على أصناف صالحة للاستيراد.');
+  if(items.length>5000) throw new Error('الحد الأقصى للاستيراد في المرة الواحدة 5000 صنف.');
+  const sh=db_().getSheetByName('Items'), lock=LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    const values=sh.getDataRange().getValues(), index={};
+    values.slice(1).forEach((r,i)=>{const k=String(r[2]||'').trim().toLowerCase();if(k)index[k]=i+1;});
+    let added=0,updated=0,skipped=0; const seen={};
+    items.forEach(item=>{
+      const code=String(item.code||'').trim(), name=String(item.name||'').trim();
+      if(!code || !name){skipped++;return;}
+      const key=code.toLowerCase(); if(seen[key]){skipped++;return;} seen[key]=true;
+      const oldRow=index[key];
+      const old=oldRow?values[oldRow]:[];
+      const row=[oldRow?old[0]:Utilities.getUuid(),
+        String(item.barcode|| (old[1]||'')).trim(),code,name,
+        String(item.unit|| (old[4]||'')).trim(),String(item.category|| (old[5]||'')).trim(),
+        true,new Date()];
+      if(oldRow){sh.getRange(oldRow+1,1,1,row.length).setValues([row]);updated++;}
+      else {sh.appendRow(row);added++;index[key]=sh.getLastRow()-1;}
+    });
+    audit_(s.username,'IMPORT','Items','catalog','added='+added+'; updated='+updated+'; skipped='+skipped);
+    return {ok:true,added,updated,skipped,total:added+updated};
+  } finally {lock.releaseLock();}
+}
