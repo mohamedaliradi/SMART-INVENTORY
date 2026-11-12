@@ -26,7 +26,10 @@ def init():
  CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at TEXT);
  CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, user_id INTEGER, created_at TEXT);
  CREATE TABLE IF NOT EXISTS sync_events(client_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, session_id INTEGER NOT NULL, item_code TEXT NOT NULL, created_at TEXT NOT NULL, result_json TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(session_id) REFERENCES sessions(id));
- '''); c.commit(); c.close()
+ ''');
+ cols={r['name'] for r in c.execute('PRAGMA table_info(sync_events)')}
+ if 'payload_hash' not in cols: c.execute('ALTER TABLE sync_events ADD COLUMN payload_hash TEXT')
+ c.commit(); c.close()
 
 def pw_hash(p):
  salt=secrets.token_hex(16); h=hashlib.pbkdf2_hmac('sha256',p.encode(),salt.encode(),240000).hex(); return salt+'$'+h
@@ -170,18 +173,23 @@ def sync(payload:list[dict],u=Depends(current)):
   client_id=str(x.get('client_id','')).strip()
   try:
    if not client_id or len(client_id)>100: raise ValueError('client_id مفقود أو غير صالح')
-   prior=c.execute('SELECT user_id,session_id,item_code FROM sync_events WHERE client_id=?',(client_id,)).fetchone()
-   if prior:
-    if prior['user_id']!=u['id'] or prior['session_id']!=int(x['session_id']) or prior['item_code']!=str(x['code']).strip():
-     raise ValueError('معرّف الحركة مستخدم لحركة أخرى')
-    done.append(client_id); continue
    sid=int(x['session_id'])
    data=CountIn(code=str(x['code']).strip(),name=str(x.get('name','')),barcode=str(x.get('barcode','')),qty=float(x['qty']),expiry=str(x.get('expiry','')),price=float(x.get('price',0)))
    if not data.code: raise ValueError('كود الصنف مطلوب')
+   if not math.isfinite(data.qty) or not math.isfinite(data.price) or data.price<0: raise ValueError('الكمية أو السعر غير صالح')
+   fingerprint=json.dumps({'session_id':sid,'code':data.code,'name':data.name,'barcode':data.barcode,'qty':data.qty,'expiry':data.expiry,'price':data.price},ensure_ascii=False,sort_keys=True,separators=(',',':'))
+   payload_hash=hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()
+   prior=c.execute('SELECT user_id,session_id,item_code,payload_hash FROM sync_events WHERE client_id=?',(client_id,)).fetchone()
+   if prior:
+    if prior['user_id']!=u['id'] or prior['session_id']!=sid or prior['item_code']!=data.code:
+     raise ValueError('معرّف الحركة مستخدم لحركة أخرى')
+    if prior['payload_hash'] and prior['payload_hash']!=payload_hash:
+     raise ValueError('تم رفض إعادة استخدام client_id مع بيانات حركة مختلفة')
+    # Historical events created before payload_hash migration retain legacy scope-only idempotency.
+    done.append(client_id); continue
    session=c.execute('SELECT status FROM sessions WHERE id=?',(sid,)).fetchone()
    if not session: raise ValueError('عملية الجرد غير موجودة')
    if session['status']!='open': raise ValueError('عملية الجرد مغلقة')
-   if not math.isfinite(data.qty) or not math.isfinite(data.price) or data.price<0: raise ValueError('الكمية أو السعر غير صالح')
    # Keep each event atomic with its idempotency record.
    c.execute('SAVEPOINT one_sync')
    r=c.execute('SELECT * FROM items WHERE session_id=? AND (code=? OR barcode=?)',(sid,data.code,data.code)).fetchone()
@@ -191,7 +199,7 @@ def sync(payload:list[dict],u=Depends(current)):
    else:
     c.execute('INSERT INTO items(session_id,code,barcode,name,book_qty,price,counted_qty,expiry,counted_by,counted_at) VALUES(?,?,?,?,0,?,?,?,?,?)',(sid,data.code,data.barcode or data.code,data.name,data.price,data.qty,data.expiry,u['id'],now)); iid=c.execute('SELECT last_insert_rowid() n').fetchone()['n']
    audit(c,u['id'],'sync_count',f'session={sid}; code={data.code}; qty={data.qty}; client_id={client_id}')
-   c.execute('INSERT INTO sync_events(client_id,user_id,session_id,item_code,created_at,result_json) VALUES(?,?,?,?,?,?)',(client_id,u['id'],sid,data.code,now,json.dumps({'item_id':iid})))
+   c.execute('INSERT INTO sync_events(client_id,user_id,session_id,item_code,created_at,result_json,payload_hash) VALUES(?,?,?,?,?,?,?)',(client_id,u['id'],sid,data.code,now,json.dumps({'item_id':iid}),payload_hash))
    c.execute('RELEASE one_sync'); c.commit(); done.append(client_id)
   except Exception as e:
    try: c.execute('ROLLBACK TO one_sync'); c.execute('RELEASE one_sync')
@@ -201,8 +209,9 @@ def sync(payload:list[dict],u=Depends(current)):
  return {'synced':done,'rejected':rejected,'count':len(done)}
 @app.get('/api/reports/{sid}')
 def report(sid:int,u=Depends(current)):
- c=db(); rows=[dict(x) for x in c.execute('SELECT *,COALESCE(counted_qty,0)-book_qty diff,(COALESCE(counted_qty,0)-book_qty)*price diff_value FROM items WHERE session_id=? ORDER BY name',(sid,))]; c.close()
- return {'rows':rows,'summary':{'total':len(rows),'counted':sum(x['counted_qty'] is not None for x in rows),'shortage':sum(x['diff']<0 for x in rows),'surplus':sum(x['diff']>0 for x in rows),'matched':sum(x['diff']==0 for x in rows),'shortage_value':sum(-x['diff_value'] for x in rows if x['diff']<0),'surplus_value':sum(x['diff_value'] for x in rows if x['diff']>0)}}
+ c=db(); rows=[dict(x) for x in c.execute('SELECT *,CASE WHEN counted_qty IS NULL THEN NULL ELSE counted_qty-book_qty END diff,CASE WHEN counted_qty IS NULL THEN NULL ELSE (counted_qty-book_qty)*price END diff_value FROM items WHERE session_id=? ORDER BY name',(sid,))]; c.close()
+ counted=[x for x in rows if x['counted_qty'] is not None]
+ return {'rows':rows,'summary':{'total':len(rows),'counted':len(counted),'shortage':sum(x['diff']<0 for x in counted),'surplus':sum(x['diff']>0 for x in counted),'matched':sum(x['diff']==0 for x in counted),'shortage_value':sum(-x['diff_value'] for x in counted if x['diff']<0),'surplus_value':sum(x['diff_value'] for x in counted if x['diff']>0)}}
 @app.get('/api/reports/{sid}/xlsx')
 def report_xlsx(sid:int,u=Depends(current)):
  data=report(sid,u); wb=Workbook(); ws=wb.active; ws.title='تقرير الجرد'; ws.append(['كود الصنف','الباركود','اسم الصنف','الرصيد الدفتري','الكمية الفعلية','الفرق','سعر الوحدة','قيمة الفرق','الصلاحية'])
