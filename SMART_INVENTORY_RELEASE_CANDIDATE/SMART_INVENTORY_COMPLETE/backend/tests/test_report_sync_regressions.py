@@ -71,6 +71,22 @@ class ReportAndSyncRegressionTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["diff"], -7)
         self.assertEqual(result["rows"][1]["diff"], -5)
 
+    def test_employee_can_create_session_and_add_catalog_item(self):
+        employee = {"id": 2, "username": "employee", "role": "employee"}
+        inventory_app.add_catalog(
+            inventory_app.CatalogIn(code="EMP-1", name="Employee-added item", barcode="EMPBAR", unit="قطعة", price=3),
+            employee,
+        )
+        created = inventory_app.new_session(
+            inventory_app.SessionIn(branch_code="EMP-B", branch_name="Employee branch", title="Employee count", mode="direct"),
+            employee,
+        )
+        self.assertTrue(created["id"])
+        c = inventory_app.db()
+        self.assertIsNotNone(c.execute("SELECT 1 FROM catalog WHERE code='EMP-1'").fetchone())
+        self.assertIsNotNone(c.execute("SELECT 1 FROM sessions WHERE id=?", (created["id"],)).fetchone())
+        c.close()
+
     def test_same_client_id_and_same_payload_is_idempotent(self):
         payload = [{
             "client_id": "event-1", "session_id": 1, "code": "ITEM-1",
