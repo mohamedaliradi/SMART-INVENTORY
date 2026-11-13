@@ -1,0 +1,58 @@
+name: PostgreSQL schema validation
+
+on:
+  pull_request:
+    branches: [postgres-migration-phase-1]
+  push:
+    branches: [postgres-migration-phase-1]
+
+jobs:
+  validate-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: smart_inventory
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: smart_inventory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smart_inventory -d smart_inventory_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Apply initial schema
+        env:
+          PGPASSWORD: ci_only_password
+        run: |
+          psql -h localhost -U smart_inventory -d smart_inventory_test -v ON_ERROR_STOP=1 \
+            -f SMART_INVENTORY_RELEASE_CANDIDATE/SMART_INVENTORY_COMPLETE/backend/migrations/001_initial_postgresql.sql
+      - name: Verify required tables
+        env:
+          PGPASSWORD: ci_only_password
+        run: |
+          count=$(psql -h localhost -U smart_inventory -d smart_inventory_test -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('users','branches','sessions','catalog','items','audit','tokens','sync_events')")
+          test "$count" = "8"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r SMART_INVENTORY_RELEASE_CANDIDATE/SMART_INVENTORY_COMPLETE/backend/requirements.txt
+      - name: Run API integration tests on PostgreSQL
+        working-directory: SMART_INVENTORY_RELEASE_CANDIDATE/SMART_INVENTORY_COMPLETE/backend
+        env:
+          DATABASE_URL: postgresql://smart_inventory:ci_only_password@localhost:5432/smart_inventory_test
+        run: pytest -q
