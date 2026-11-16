@@ -129,11 +129,18 @@ function saveCount(token,data) {
   if(!code||!name||!branch||!Number.isFinite(qty)||!Number.isFinite(price)||price<0) throw new Error('راجع الكود والاسم والفرع والكمية والسعر.');
   const lock=LockService.getScriptLock(); lock.waitLock(20000);
   try {
-    const sh=db_().getSheetByName('InventoryLines');
+    const ss=db_(), sh=ss.getSheetByName('InventoryLines');
+    // Resolve the catalog item by either item code or barcode so each matched
+    // inventory line keeps its stable Items.item_id instead of an empty link.
+    const itemRows=ss.getSheetByName('Items').getDataRange().getValues().slice(1);
+    const key=code.toLowerCase();
+    const item=itemRows.find(r=>String(r[2]||'').trim().toLowerCase()===key ||
+                                String(r[1]||'').trim().toLowerCase()===key);
+    const itemId=item ? String(item[0]) : '';
     const id=Utilities.getUuid();
-    sh.appendRow([id,'', '',code,name,qty,price,String(data.expiry||''),branch,s.username,new Date(),String(data.notes||'').slice(0,300)]);
-    audit_(s.username,'CREATE','InventoryLines',id,'code='+code+'; qty='+qty);
-    return {ok:true,id};
+    sh.appendRow([id,'',itemId,code,name,qty,price,String(data.expiry||''),branch,s.username,new Date(),String(data.notes||'').slice(0,300)]);
+    audit_(s.username,'CREATE','InventoryLines',id,'code='+code+'; qty='+qty+'; item_link='+(itemId?'matched':'unmatched'));
+    return {ok:true,id,itemLinked:Boolean(itemId)};
   } finally {lock.releaseLock();}
 }
 function listCounts(token) {
