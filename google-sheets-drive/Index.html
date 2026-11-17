@@ -57,7 +57,8 @@ function asArray(value){return Array.isArray(value)?value:[];}
 function msg(id,e){$(id).textContent=e&&e.message?e.message:String(e)}
 function online(){const yes=navigator.onLine;$('connection').textContent=yes?'● متصل':'● غير متصل';$('connection').style.color=yes?'#d8f3df':'#ffd9d5';$('onlineStatus').value=yes?'متصل':'غير متصل';}
 window.addEventListener('online',()=>{online();syncQueue()});window.addEventListener('offline',online);
-function doLogin(){ $('loginError').textContent='';run('login',[$('username').value,$('password').value],r=>{if(!r||!r.token)throw new Error('استجابة تسجيل الدخول غير مكتملة من الخادم');token=String(r.token);me=r;showApp()},e=>msg('loginError',e))}
+function doLogin(){ $('loginError').textContent='';run('login',[$('username').value,$('password').value],r=>{if(!r||!r.token)throw new Error('استجابة تسجيل الدخول غير مكتملة من الخادم');token=String(r.token);me=r;localStorage.setItem('smart_inventory_session_token',token);showApp()},e=>msg('loginError',e))}
+function restoreSession(){const saved=localStorage.getItem('smart_inventory_session_token');if(!saved)return;token=saved;run('getSessionUser',[token],r=>{if(!r||!r.username||!r.role)throw new Error('بيانات الجلسة غير صالحة');me=r;showApp()},e=>{localStorage.removeItem('smart_inventory_session_token');token='';me=null;$('app').classList.add('hidden');$('login').classList.remove('hidden');})}
 function showApp(){usersLoaded=false;auditLoaded=false;$('login').classList.add('hidden');$('app').classList.remove('hidden');$('welcome').textContent='مرحباً '+me.username;$('role').textContent='الصلاحية: '+me.role;$('changeCard').classList.toggle('hidden',!me.mustChangePassword);$('mainArea').classList.toggle('hidden',!!me.mustChangePassword);$('createSessionCard').classList.toggle('hidden',!['admin','supervisor'].includes(me.role));$('usersTab').classList.toggle('hidden',me.role!=='admin');$('auditTab').classList.toggle('hidden',me.role!=='admin');$('catalogTab').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="usersTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="auditTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="catalogTab"]').classList.toggle('hidden',me.role!=='admin');online();loadAll();syncQueue()}
 function loadAll(){loadAppData();loadCatalog();loadSessions();setTimeout(loadStats,250)}
 function tab(id,btn){document.querySelectorAll('.tabPanel').forEach(x=>x.classList.add('hidden'));$(id).classList.remove('hidden');document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');if(id==='usersTab'&&me&&me.role==='admin'&&!usersLoaded)loadUsers();if(id==='auditTab'&&me&&me.role==='admin'&&!auditLoaded)loadAudit();}
@@ -204,6 +205,7 @@ function loadAudit() {
   }, e => console.error('Audit loading error:', e));
 }
 function changePass(){if($('newPass').value!==$('confirmPass').value){msg('changeMsg','تأكيد كلمة المرور غير مطابق');return}run('changePassword',[token,$('oldPass').value,$('newPass').value],()=>{me.mustChangePassword=false;$('changeCard').classList.add('hidden');$('mainArea').classList.remove('hidden');loadAll()},e=>msg('changeMsg',e))}
-function doLogout(){run('logout',[token],()=>{},()=>{});token='';me=null;$('app').classList.add('hidden');$('login').classList.remove('hidden')}
+function doLogout(){run('logout',[token],()=>{},()=>{});localStorage.removeItem('smart_inventory_session_token');token='';me=null;$('app').classList.add('hidden');$('login').classList.remove('hidden')}
 online();
+window.addEventListener('load',restoreSession);
 </script></body></html>
