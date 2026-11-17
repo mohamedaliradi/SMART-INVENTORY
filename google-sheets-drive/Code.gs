@@ -267,6 +267,7 @@ function adminCreateInventorySession(token, data) {
   data=data||{};
   const branchId=String(data.branchId||''), warehouseId=String(data.warehouseId||''), name=String(data.name||'').trim();
   if(!branchId||!warehouseId||!name) throw new Error('اختر الفرع والمخزن واكتب اسم عملية الجرد.');
+  if(name.length>150) throw new Error('اسم عملية الجرد يجب ألا يزيد عن 150 حرفاً.');
   const ss=db_(), br=ss.getSheetByName('Branches').getDataRange().getValues().slice(1).find(r=>String(r[0])===branchId&&(r[2]===true||String(r[2]).toLowerCase()==='true'));
   const wh=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1).find(r=>String(r[0])===warehouseId&&String(r[1])===branchId&&(r[3]===true||String(r[3]).toLowerCase()==='true'));
   if(!br||!wh) throw new Error('الفرع أو المخزن غير صحيح.');
@@ -290,14 +291,16 @@ function saveSessionCount(token, data) {
   const s=session_(token); requireRole_(s,['admin','supervisor','employee']);
   if(s.mustChange) throw new Error('يجب تغيير كلمة المرور أولاً.');
   data=data||{};
-  const sessionId=String(data.sessionId||''), code=String(data.code||'').trim(), qty=Number(data.qty), price=Number(data.price||0);
+  const sessionId=String(data.sessionId||''), code=String(data.code||'').trim();
+  if(data.qty===null||typeof data.qty==='undefined'||String(data.qty).trim()==='') throw new Error('أدخل الكمية الفعلية.');
+  const qty=Number(data.qty), price=Number(data.price||0);
   if(!sessionId||!code||!Number.isFinite(qty)||!Number.isFinite(price)||price<0) throw new Error('راجع العملية والكود والكمية والسعر.');
   const ss=db_(), sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1);
   const inv=sessions.find(r=>String(r[0])===sessionId);
   if(!inv) throw new Error('عملية الجرد غير موجودة.');
   if(String(inv[4])!=='open') throw new Error('عملية الجرد مغلقة ولا تقبل حركات جديدة.');
   const catalog=ss.getSheetByName('Items').getDataRange().getValues().slice(1);
-  const item=catalog.find(r=>String(r[2]).trim().toLowerCase()===code.toLowerCase()||String(r[1]).trim().toLowerCase()===code.toLowerCase());
+  const item=catalog.find(r=>(r[6]===true||String(r[6]).toLowerCase()==='true')&&(String(r[2]||'').trim().toLowerCase()===code.toLowerCase()||String(r[1]||'').trim().toLowerCase()===code.toLowerCase()));
   if(!item) throw new Error('الصنف غير موجود في الملف الرئيسي.');
   const lock=LockService.getScriptLock(); lock.waitLock(20000);
   try {
