@@ -41,7 +41,7 @@
 </div></section></main>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
-let token='',me=null,catalog=[],branches=[],warehouses=[],sessions=[],lines=[],reportData=null,users=[];
+let token='',me=null,catalog=[],branches=[],warehouses=[],sessions=[],lines=[],reportData=null,users=[],usersLoaded=false,auditLoaded=false;
 const $=id=>document.getElementById(id),queueKey='smart_inventory_pending_v1';
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function run(fn,args,ok,err){
@@ -58,19 +58,15 @@ function msg(id,e){$(id).textContent=e&&e.message?e.message:String(e)}
 function online(){const yes=navigator.onLine;$('connection').textContent=yes?'● متصل':'● غير متصل';$('connection').style.color=yes?'#d8f3df':'#ffd9d5';$('onlineStatus').value=yes?'متصل':'غير متصل';}
 window.addEventListener('online',()=>{online();syncQueue()});window.addEventListener('offline',online);
 function doLogin(){ $('loginError').textContent='';run('login',[$('username').value,$('password').value],r=>{if(!r||!r.token)throw new Error('استجابة تسجيل الدخول غير مكتملة من الخادم');token=String(r.token);me=r;showApp()},e=>msg('loginError',e))}
-function showApp(){ $('login').classList.add('hidden');$('app').classList.remove('hidden');$('welcome').textContent='مرحباً '+me.username;$('role').textContent='الصلاحية: '+me.role;$('changeCard').classList.toggle('hidden',!me.mustChangePassword);$('mainArea').classList.toggle('hidden',!!me.mustChangePassword);$('createSessionCard').classList.toggle('hidden',!['admin','supervisor'].includes(me.role));$('usersTab').classList.toggle('hidden',me.role!=='admin');$('auditTab').classList.toggle('hidden',me.role!=='admin');$('catalogTab').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="usersTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="auditTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="catalogTab"]').classList.toggle('hidden',me.role!=='admin');online();loadAll();syncQueue()}
-function loadAll(){loadAppData();loadCatalog();loadSessions();loadStats();if(me.role==='admin'){loadUsers();loadAudit()}}
-function tab(id,btn){document.querySelectorAll('.tabPanel').forEach(x=>x.classList.add('hidden'));$(id).classList.remove('hidden');document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');}
+function showApp(){usersLoaded=false;auditLoaded=false;$('login').classList.add('hidden');$('app').classList.remove('hidden');$('welcome').textContent='مرحباً '+me.username;$('role').textContent='الصلاحية: '+me.role;$('changeCard').classList.toggle('hidden',!me.mustChangePassword);$('mainArea').classList.toggle('hidden',!!me.mustChangePassword);$('createSessionCard').classList.toggle('hidden',!['admin','supervisor'].includes(me.role));$('usersTab').classList.toggle('hidden',me.role!=='admin');$('auditTab').classList.toggle('hidden',me.role!=='admin');$('catalogTab').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="usersTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="auditTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="catalogTab"]').classList.toggle('hidden',me.role!=='admin');online();loadAll();syncQueue()}
+function loadAll(){loadAppData();loadCatalog();loadSessions();setTimeout(loadStats,250)}
+function tab(id,btn){document.querySelectorAll('.tabPanel').forEach(x=>x.classList.add('hidden'));$(id).classList.remove('hidden');document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');if(id==='usersTab'&&me&&me.role==='admin'&&!usersLoaded)loadUsers();if(id==='auditTab'&&me&&me.role==='admin'&&!auditLoaded)loadAudit();}
 function renderSessionWarehouses(){
   warehouses=asArray(warehouses);
   const branchSelect=$('sessionBranch'),warehouseSelect=$('sessionWarehouse');
   if(!branchSelect||!warehouseSelect)return;
   const bid=String(branchSelect.value||'').trim();
   const matched=warehouses.filter(w=>w&&String(w.branchId||'').trim()===bid);
-
-  console.log('Selected Branch:', bid);
-  console.log('All Warehouses:', warehouses);
-  console.log('Matched Warehouses:', matched);
 
   $('sessionWarehouse').innerHTML = matched.length
     ? matched.map(w =>
@@ -187,7 +183,7 @@ function importCatalogFile(){
  }).catch(e=>msg('catalogMessage',e));
 }
 function createUser(){run('adminCreateUser',[token,$('newUser').value,$('newUserPass').value,$('newRole').value],()=>{msg('userMessage','تم إنشاء المستخدم');$('newUser').value='';$('newUserPass').value='';loadUsers()},e=>msg('userMessage',e))}
-function loadUsers(){run('adminListUsers',[token],rows=>{users=asArray(rows);$('userRows').innerHTML=users.map(u=>'<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+(u.active?'نشط':'موقوف')+'</td><td><button class="alt" onclick="toggleUser(\''+esc(u.id)+'\','+(!u.active)+')">'+(u.active?'إيقاف':'تفعيل')+'</button><button onclick="resetUser(\''+esc(u.id)+'\')">تغيير كلمة المرور</button><button class="danger" onclick="deleteUser(\''+esc(u.id)+'\')">حذف</button></td></tr>').join('')},e=>msg('userMessage',e))}
+function loadUsers(){run('adminListUsers',[token],rows=>{users=asArray(rows);usersLoaded=true;$('userRows').innerHTML=users.map(u=>'<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+(u.active?'نشط':'موقوف')+'</td><td><button class="alt" onclick="toggleUser(\''+esc(u.id)+'\','+(!u.active)+')">'+(u.active?'إيقاف':'تفعيل')+'</button><button onclick="resetUser(\''+esc(u.id)+'\')">تغيير كلمة المرور</button><button class="danger" onclick="deleteUser(\''+esc(u.id)+'\')">حذف</button></td></tr>').join('')},e=>msg('userMessage',e))}
 function toggleUser(id,active){run('adminSetUserActive',[token,id,active],loadUsers,e=>alert(e.message||e))}
 function resetUser(id){const p=prompt('أدخل كلمة المرور الجديدة (10 أحرف على الأقل):');if(p===null)return;run('adminResetUserPassword',[token,id,p],()=>alert('تم تحديث كلمة المرور وسيُطلب من المستخدم تغييرها عند الدخول'),e=>alert(e.message||e))}
 function deleteUser(id){if(!confirm('تأكيد حذف المستخدم نهائياً؟'))return;run('adminDeleteUser',[token,id],loadUsers,e=>alert(e.message||e))}
@@ -195,7 +191,7 @@ function loadReport(){const id=$('reportSession').value;if(!id)return;run('getIn
 function exportReportCSV(){if(!reportData){alert('اعرض التقرير أولاً');return}const rows=[['الكود','الصنف','الصلاحية','التشغيلة','الكمية','القيمة','عدد الحركات'],...asArray(reportData.rows).map(x=>[x.code,x.name,x.expiry,x.batch,x.qty,x.value,x.lines])];const csv='\uFEFF'+rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='SMART-INVENTORY-report.csv';a.click();URL.revokeObjectURL(a.href)}
 function loadAudit() {
   run('listAuditLog', [token], rows => {
-    rows = asArray(rows);
+    rows = asArray(rows); auditLoaded=true;
     $('auditRows').innerHTML = rows.map(x =>
       '<tr><td>' + esc(x.actor) +
       '</td><td>' + esc(x.action) +
