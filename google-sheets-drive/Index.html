@@ -72,14 +72,14 @@ function loadCatalog(){run('listCatalog',[token],rows=>{catalog=rows||[];$('item
 function renderCatalog(){const q=($('catalogSearch').value||'').toLowerCase();$('catalogRows').innerHTML=catalog.filter(x=>(x.code+' '+x.name+' '+x.barcode).toLowerCase().includes(q)).slice(0,500).map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.barcode)+'</td><td>'+esc(x.unit)+'</td><td>'+esc(x.category)+'</td></tr>').join('')}
 function saveCatalogItem(){const d={code:$('itemCode').value,name:$('itemName').value,barcode:$('itemBarcode').value,unit:$('itemUnit').value,category:$('itemCategory').value};run('adminSaveItem',[token,d],r=>{msg('catalogMessage',r.updated?'تم تحديث الصنف':'تمت إضافة الصنف');loadCatalog()},e=>msg('catalogMessage',e))}
 function parseCSV(t){const rows=[];let row=[],cell='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c==='"'&&t[i+1]==='"'){cell+='"';i++}else if(c==='"')q=false;else cell+=c}else if(c==='"')q=true;else if(c===','){row.push(cell);cell=''}else if(c==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell=''}else cell+=c}row.push(cell.replace(/\r$/,''));if(row.some(x=>x!==''))rows.push(row);return rows}
-function normalizeImportHeader(v){return String(v??'').replace(/^\\uFEFF/,'').trim().toLowerCase().replace(/[\\s_\\-]+/g,'')}
+function normalizeImportHeader(v){return String(v??'').replace(/^\uFEFF/,'').trim().toLowerCase().replace(/[\s_\-]+/g,'')}
 function importCatalogFile(){
  const f=$('catalogFile').files[0];
  if(!f){msg('catalogMessage','اختر ملف Excel أو CSV أولاً');return}
  msg('catalogMessage','جارٍ قراءة الملف...');
- const isCsv=/\\.csv$/i.test(f.name);
+ const isCsv=/\.csv$/i.test(f.name);
  const readRows=()=>{
-  if(isCsv){return new Promise((resolve,reject)=>{const rd=new FileReader();rd.onload=()=>{try{resolve(parseCSV(String(rd.result||'').replace(/^\\uFEFF/,'')))}catch(e){reject(e)}};rd.onerror=()=>reject(new Error('تعذر قراءة ملف CSV'));rd.readAsText(f,'UTF-8')})}
+  if(isCsv){return new Promise((resolve,reject)=>{const rd=new FileReader();rd.onload=()=>{try{resolve(parseCSV(String(rd.result||'').replace(/^\uFEFF/,'')))}catch(e){reject(e)}};rd.onerror=()=>reject(new Error('تعذر قراءة ملف CSV'));rd.readAsText(f,'UTF-8')})}
   if(typeof XLSX==='undefined') return Promise.reject(new Error('تعذر تحميل قارئ Excel. تحقق من اتصال الإنترنت ثم أعد المحاولة.'));
   return f.arrayBuffer().then(buf=>{const wb=XLSX.read(buf,{type:'array',cellText:true,cellDates:false});if(!wb.SheetNames.length)throw new Error('ملف Excel لا يحتوي على أوراق عمل');const ws=wb.Sheets[wb.SheetNames[0]];return XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''})});
  };
@@ -101,7 +101,7 @@ function importCatalogFile(){
   if(!data.length)throw new Error('لم يتم العثور على صفوف صالحة. راجع كود الصنف واسم الصنف.');
   if(data.length>5000)throw new Error('عدد الأصناف '+data.length+'؛ الحد الأقصى 5000 صنف في المرة الواحدة.');
   const sample=data.slice(0,5).map(x=>x.code+' — '+x.name).join(' | ');
-  if(!confirm('معاينة الاستيراد من: '+f.name+'\\nأصناف صالحة: '+data.length+'\\nصفوف ناقصة: '+invalid+'\\nأكواد مكررة داخل الملف: '+duplicates+'\\nأول الأصناف: '+sample+'\\n\\nسيتم تحديث الصنف الموجود بنفس الكود وإضافة الأكواد الجديدة دون حذف أي صنف. هل تريد المتابعة؟'))return;
+  if(!confirm('معاينة الاستيراد من: '+f.name+'\nأصناف صالحة: '+data.length+'\nصفوف ناقصة: '+invalid+'\nأكواد مكررة داخل الملف: '+duplicates+'\nأول الأصناف: '+sample+'\n\nسيتم تحديث الصنف الموجود بنفس الكود وإضافة الأكواد الجديدة دون حذف أي صنف. هل تريد المتابعة؟'))return;
   msg('catalogMessage','جارٍ استيراد '+data.length+' صنف...');
   run('adminImportItems',[token,data],r=>{
    msg('catalogMessage','اكتمل الاستيراد: '+r.added+' جديد، '+r.updated+' تحديث، '+(r.skipped||0)+' تخطي. لم يتم حذف أي صنف.');
