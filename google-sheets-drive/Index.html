@@ -100,7 +100,39 @@ function loadAppData(){
 } 
 
 function loadStats(){run('getDashboardStats',[token],d=>{d=d&&typeof d==='object'?d:{};$('statUser').textContent=d.username||(me&&me.username)||'-';$('statSessions').textContent=Number(d.sessions)||0;$('statEmployees').textContent=Number(d.employees)||0;$('statItems').textContent=Number(d.items)||0},e=>console.error('Dashboard stats error:',e))}
-function loadSessions(){run('listInventorySessions',[token],rows=>{sessions=asArray(rows).filter(Boolean);const opts=sessions.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+' ('+esc(s.branchName)+' / '+esc(s.warehouseName)+') – '+(s.status==='open'?'مفتوحة':'مغلقة')+'</option>').join('');$('sessionSelect').innerHTML=opts||'<option value="">لا توجد عمليات جرد</option>';$('reportSession').innerHTML=opts||'<option value="">لا توجد عمليات جرد</option>';renderSessions();selectSession()},e=>console.error('Load sessions error:',e))}
+function loadSessions(){
+  $('sessionSelect').innerHTML='<option value="">جاري تحميل عمليات الجرد...</option>';
+  $('reportSession').innerHTML='<option value="">جاري تحميل عمليات الجرد...</option>';
+  run('listInventorySessions',[token],rows=>{
+    if(!Array.isArray(rows)){
+      console.error('SMART INVENTORY INVALID RESPONSE [listInventorySessions]:',rows);
+      sessions=[];
+      $('sessionSelect').innerHTML='<option value="">تعذر قراءة عمليات الجرد - راجع Console</option>';
+      $('reportSession').innerHTML='<option value="">تعذر قراءة عمليات الجرد - راجع Console</option>';
+      return;
+    }
+    sessions=rows.filter(s=>s&&s.id);
+    const opts=sessions.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+' ('+esc(s.branchName)+' / '+esc(s.warehouseName)+') – '+(s.status==='open'?'مفتوحة':'مغلقة')+'</option>').join('');
+    const empty='<option value="">لا توجد عمليات جرد</option>';
+    $('sessionSelect').innerHTML=opts||empty;
+    $('reportSession').innerHTML=opts||empty;
+    renderSessions();
+    selectSession();
+    if(!sessions.length){
+      run('getInventorySessionsDiagnostics',[token],d=>{
+        console.error('SMART INVENTORY SESSION DIAGNOSTICS:',d);
+        if(d&&Number(d.dataRows)>0){
+          $('sessionSelect').innerHTML='<option value="">توجد بيانات في الشيت لكن لم يتم تحويلها - راجع Console</option>';
+          $('reportSession').innerHTML='<option value="">توجد بيانات في الشيت لكن لم يتم تحويلها - راجع Console</option>';
+        }
+      },e=>console.error('Session diagnostics error:',e));
+    }
+  },e=>{
+    console.error('Load sessions error:',e);
+    $('sessionSelect').innerHTML='<option value="">فشل تحميل عمليات الجرد</option>';
+    $('reportSession').innerHTML='<option value="">فشل تحميل عمليات الجرد</option>';
+  });
+}
 function renderSessions(){sessions=asArray(sessions);$('sessionRows').innerHTML=sessions.map(s=>'<tr><td>'+esc(s.name)+'</td><td>'+esc(s.branchName)+'</td><td>'+esc(s.warehouseName)+'</td><td>'+esc(s.createdAt||'')+'</td><td>'+s.count+'</td><td><span class="badge '+(s.status==='closed'?'closed':'')+'">'+(s.status==='open'?'مفتوحة':'مغلقة')+'</span></td><td><button class="alt" onclick="chooseSession(\''+esc(s.id)+'\')">فتح</button>'+(['admin','supervisor'].includes(me.role)?'<button onclick="setSessionStatus(\''+esc(s.id)+'\',\''+(s.status==='open'?'closed':'open')+'\')">'+(s.status==='open'?'إغلاق':'إعادة فتح')+'</button>':'')+'</td></tr>').join('')}
 function createSession(){const d={branchId:$('sessionBranch').value,warehouseId:$('sessionWarehouse').value,name:$('sessionName').value};run('adminCreateInventorySession',[token,d],r=>{$('sessionName').value='';$('sessionMessage').textContent='تم إنشاء عملية الجرد';loadSessions();loadStats()},e=>msg('sessionMessage',e))}
 function setSessionStatus(id,status){run('adminSetInventorySessionStatus',[token,id,status],()=>loadSessions(),e=>alert(e.message||e))}
