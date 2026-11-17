@@ -11,9 +11,10 @@ const APP_CONFIG = Object.freeze({
   SHEETS: [
     { name: 'Users', headers: ['user_id','username','password_hash','password_salt','role','is_active','must_change_password','created_at','updated_at'] },
     { name: 'Branches', headers: ['branch_id','branch_name','is_active'] },
+    { name: 'Warehouses', headers: ['warehouse_id','branch_id','warehouse_name','is_active'] },
     { name: 'Items', headers: ['item_id','barcode','item_code','item_name','unit','category','is_active','updated_at'] },
     { name: 'InventorySessions', headers: ['session_id','branch_id','warehouse_id','session_name','status','created_by','created_at'] },
-    { name: 'InventoryLines', headers: ['line_id','session_id','item_id','item_code','item_name','counted_qty','unit_price','expiry_date','branch_name','employee_username','counted_at','notes'] },
+    { name: 'InventoryLines', headers: ['line_id','session_id','item_id','item_code','item_name','counted_qty','unit_price','expiry_date','branch_name','employee_username','counted_at','notes','warehouse_id','warehouse_name'] },
     { name: 'AuditLog', headers: ['event_id','actor','action','entity','entity_id','event_time','details'] },
     { name: 'Settings', headers: ['setting_key','setting_value','updated_at'] }
   ]
@@ -33,7 +34,7 @@ function setupDatabase() {
     APP_CONFIG.SHEETS.forEach(d => {
       let sh = ss.getSheetByName(d.name);
       if (!sh) sh = ss.insertSheet(d.name);
-      if (sh.getLastRow() <= 1) { sh.getRange(1,1,1,d.headers.length).setValues([d.headers]); sh.setFrozenRows(1); } else { const existing=sh.getRange(1,1,1,d.headers.length).getValues()[0]; if (d.headers.some((h,i)=>existing[i]!==h)) throw new Error('تعارض في أعمدة '+d.name+'؛ أوقفنا الإعداد لحماية البيانات الموجودة.'); }
+      if (sh.getLastRow() <= 1) { sh.getRange(1,1,1,d.headers.length).setValues([d.headers]); sh.setFrozenRows(1); } else { const existing=sh.getRange(1,1,1,d.headers.length).getValues()[0]; const mismatch=existing.findIndex((h,i)=>h && h!==d.headers[i]); if (mismatch>=0) throw new Error('تعارض في أعمدة '+d.name+'؛ أوقفنا الإعداد لحماية البيانات الموجودة.'); const firstMissing=existing.findIndex(h=>!h); if(firstMissing>=0){ if(existing.slice(firstMissing).some(Boolean)) throw new Error('يوجد فراغ داخل عناوين '+d.name+'؛ أوقفنا الإعداد لحماية البيانات.'); sh.getRange(1,firstMissing+1,1,d.headers.length-firstMissing).setValues([d.headers.slice(firstMissing)]); } sh.setFrozenRows(1); }
     });
     const blank = ss.getSheetByName('Sheet1');
     if (blank && ss.getSheets().length > APP_CONFIG.SHEETS.length) ss.deleteSheet(blank);
@@ -120,25 +121,29 @@ function getAppData(token) {
   const ss=db_();
   const branches=ss.getSheetByName('Branches').getDataRange().getValues().slice(1).filter(r=>r[0] && (r[2]===true||String(r[2]).toLowerCase()==='true')).map(r=>({id:r[0],name:r[1]}));
   const items=ss.getSheetByName('Items').getDataRange().getValues().slice(1).filter(r=>r[0] && (r[6]===true||String(r[6]).toLowerCase()==='true')).map(r=>({id:r[0],barcode:r[1],code:r[2],name:r[3],unit:r[4]}));
-  return {user:s,branches,items};
+  const warehouses=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1).filter(r=>r[0] && (r[3]===true||String(r[3]).toLowerCase()==='true')).map(r=>({id:r[0],branchId:r[1],name:r[2]}));
+  return {user:s,branches,warehouses,items};
 }
 function saveCount(token,data) {
   const s=session_(token); requireRole_(s,['admin','supervisor','employee']); if(s.mustChange) throw new Error('يجب تغيير كلمة المرور أولاً.');
   data=data||{}; const code=String(data.code||'').trim(), name=String(data.name||'').trim(), branch=String(data.branch||'').trim();
-  const qty=Number(data.qty), price=Number(data.price||0);
-  if(!code||!name||!branch||!Number.isFinite(qty)||!Number.isFinite(price)||price<0) throw new Error('راجع الكود والاسم والفرع والكمية والسعر.');
+  const qty=Number(data.qty), price=Number(data.price||0), warehouseId=String(data.warehouseId||'').trim();
+  const ss=db_(), branches=ss.getSheetByName('Branches').getDataRange().getValues().slice(1), warehouses=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1);
+  const branchRow=branches.find(r=>String(r[0])===branch && (r[2]===true||String(r[2]).toLowerCase()==='true'));
+  const warehouseRow=warehouses.find(r=>String(r[0])===warehouseId && String(r[1])===branch && (r[3]===true||String(r[3]).toLowerCase()==='true'));
+  if(!code||!name||!branch||!branchRow||!warehouseRow||!Number.isFinite(qty)||!Number.isFinite(price)||price<0) throw new Error('راجع الصنف والفرع والمخزن والكمية والسعر.');
   const lock=LockService.getScriptLock(); lock.waitLock(20000);
   try {
     const sh=db_().getSheetByName('InventoryLines');
     const id=Utilities.getUuid();
-    sh.appendRow([id,'', '',code,name,qty,price,String(data.expiry||''),branch,s.username,new Date(),String(data.notes||'').slice(0,300)]);
+    sh.appendRow([id,'', '',code,name,qty,price,String(data.expiry||''),String(branchRow[1]),s.username,new Date(),String(data.notes||'').slice(0,300),warehouseId,String(warehouseRow[2])]);
     audit_(s.username,'CREATE','InventoryLines',id,'code='+code+'; qty='+qty);
     return {ok:true,id};
   } finally {lock.releaseLock();}
 }
 function listCounts(token) {
   const s=session_(token); const rows=db_().getSheetByName('InventoryLines').getDataRange().getValues().slice(1);
-  return rows.filter(r=>r[0]).slice(-500).reverse().map(r=>({id:r[0],code:r[3],name:r[4],qty:r[5],price:r[6],expiry:r[7],branch:r[8],employee:r[9],time:r[10]}));
+  return rows.filter(r=>r[0]).slice(-500).reverse().map(r=>({id:r[0],code:r[3],name:r[4],qty:r[5],price:r[6],expiry:r[7],branch:r[8],employee:r[9],time:r[10],warehouseId:r[12]||'',warehouse:r[13]||''}));
 }
 function adminCreateUser(token,username,password,role) {
   const s=session_(token); requireRole_(s,['admin']);
@@ -208,4 +213,26 @@ function adminImportItems(token,items) {
     audit_(s.username,'IMPORT','Items','catalog','added='+added+'; updated='+updated+'; skipped='+skipped);
     return {ok:true,added,updated,skipped,total:added+updated};
   } finally {lock.releaseLock();}
+}
+
+
+/** Warehouse administration: stable IDs tied to an existing branch. */
+function adminListWarehouses(token) {
+  const s=session_(token); requireRole_(s,['admin']);
+  const rows=db_().getSheetByName('Warehouses').getDataRange().getValues().slice(1);
+  return rows.filter(r=>r[0]).map(r=>({id:String(r[0]),branchId:String(r[1]||''),name:String(r[2]||''),active:r[3]===true||String(r[3]).toLowerCase()==='true'}));
+}
+function adminSaveWarehouse(token,warehouse) {
+  const s=session_(token); requireRole_(s,['admin']); warehouse=warehouse||{};
+  const branchId=String(warehouse.branchId||'').trim(), name=String(warehouse.name||'').trim();
+  if(!branchId||!name) throw new Error('اختر الفرع واكتب اسم المخزن.');
+  const ss=db_(), branch=ss.getSheetByName('Branches').getDataRange().getValues().slice(1).find(r=>String(r[0])===branchId && (r[2]===true||String(r[2]).toLowerCase()==='true'));
+  if(!branch) throw new Error('الفرع غير موجود أو غير نشط.');
+  const sh=ss.getSheetByName('Warehouses'), values=sh.getDataRange().getValues(), existingId=String(warehouse.id||'').trim();
+  const idx=existingId?values.findIndex((r,i)=>i>0&&String(r[0])===existingId):-1;
+  if(idx>0 && String(values[idx][1])!==branchId) throw new Error('لا يمكن نقل مخزن مرتبط بحركات جرد؛ أنشئ مخزناً جديداً للفرع الآخر.');
+  const id=idx>0?existingId:Utilities.getUuid(), row=[id,branchId,name,true];
+  if(idx>0) sh.getRange(idx+1,1,1,4).setValues([row]); else sh.appendRow(row);
+  audit_(s.username,idx>0?'UPDATE':'CREATE','Warehouses',id,'branch='+branchId+'; name='+name);
+  return {ok:true,id,updated:idx>0};
 }

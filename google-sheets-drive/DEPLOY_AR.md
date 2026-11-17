@@ -6,7 +6,7 @@
 استخدم **نفس مشروع Apps Script ونفس حساب Google** الذي شغّلت منه `setupDatabase` سابقاً؛ حتى يحتفظ المشروع بمعرّف ملف قاعدة البيانات الأول ومجلد Drive في Script Properties.
 
 إذا أنشأت مشروعاً جديداً بدلاً منه، أضف في Project Settings > Script Properties:
-- `SMART_INVENTORY_SPREADSHEET_ID` = `1MXAVr7xtVX9Hq2om_30mBW1omfYXBLfJll_hL5DzZ8Y`
+- `SMART_INVENTORY_SPREADSHEET_ID` = `1sEnn9nwyl0DagSoBF0g8l18XpzdqoBPx`
 - `SMART_INVENTORY_DRIVE_FOLDER_ID` = `1Bd8kTa55RAMgOwQ72O-UiG_QlrKe30ky`
 
 لا تضع هذه المعرفات في مستودع عام أو في كود الواجهة.
@@ -18,6 +18,8 @@
 4. احفظ المشروع.
 
 ## 3) جهّز الجداول وحساب المدير
+
+في إعدادات مشروع Apps Script افتح Project Settings ثم Script Properties، واضبط `SMART_INVENTORY_SPREADSHEET_ID` على معرّف الملف المركزي الجديد: `1sEnn9nwyl0DagSoBF0g8l18XpzdqoBPx`. لا تشغّل `setupDatabase` قبل ضبط هذه الخاصية حتى لا ينشئ ملف بيانات جديداً. النسخة الحالية تضيف ورقة `Warehouses` وتضيف `warehouse_id` و`warehouse_name` في نهاية `InventoryLines` فقط؛ ولا تستبدل عناوين أو بيانات الأعمدة القديمة.
 1. اختر الدالة `setupDatabase` من قائمة الدوال ثم اضغط Run.
 2. وافق على صلاحيات Google Sheets وGoogle Drive.
 3. افتح Execution log وابحث عن `SMART INVENTORY INITIAL ADMIN`.
