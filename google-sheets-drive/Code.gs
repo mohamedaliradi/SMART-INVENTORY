@@ -283,7 +283,7 @@ function listInventorySessions(token) {
       id,branchId,branchName:br?String(br[bn]||''):'',
       warehouseId,warehouseName:wh?String(wh[wn]||''):'',
       name:String(r[sn]||''),status:String(r[st]||'open'),
-      createdBy:String(r[su]||''),createdAt:r[sd],
+      createdBy:String(r[su]||''),createdAt:r[sd] instanceof Date ? Utilities.formatDate(r[sd],ss.getSpreadsheetTimeZone()||Session.getScriptTimeZone(),'yyyy-MM-dd HH:mm:ss') : String(r[sd]||''),
       count:lineRows.filter(x=>String(x[lid]||'').trim()===id).length
     };
   }).reverse();
