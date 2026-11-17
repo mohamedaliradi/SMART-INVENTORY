@@ -44,32 +44,77 @@
 let token='',me=null,catalog=[],branches=[],warehouses=[],sessions=[],lines=[],reportData=null,users=[];
 const $=id=>document.getElementById(id),queueKey='smart_inventory_pending_v1';
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function run(fn,args,ok,err){google.script.run.withSuccessHandler(ok).withFailureHandler(err)[fn](...args)}
+function run(fn,args,ok,err){
+  const fail=e=>{console.error('SMART INVENTORY API ERROR ['+fn+']:',e);if(typeof err==='function'){try{err(e)}catch(x){console.error('SMART INVENTORY ERROR HANDLER ['+fn+']:',x)}}};
+  try{
+    if(typeof google==='undefined'||!google.script||!google.script.run)throw new Error('تعذر الاتصال بخدمات Google Apps Script. أعد فتح رابط التطبيق المنشور.');
+    const runner=google.script.run.withSuccessHandler(result=>{try{if(typeof ok==='function')ok(result)}catch(x){console.error('SMART INVENTORY CALLBACK ERROR ['+fn+']:',x);if(typeof err==='function'){try{err(x)}catch(y){console.error('SMART INVENTORY ERROR HANDLER ['+fn+']:',y)}}}}).withFailureHandler(fail);
+    if(typeof runner[fn]!=='function')throw new Error('دالة الخادم غير موجودة: '+fn);
+    runner[fn](...(Array.isArray(args)?args:[]));
+  }catch(e){fail(e)}
+}
+function asArray(value){return Array.isArray(value)?value:[];}
 function msg(id,e){$(id).textContent=e&&e.message?e.message:String(e)}
 function online(){const yes=navigator.onLine;$('connection').textContent=yes?'● متصل':'● غير متصل';$('connection').style.color=yes?'#d8f3df':'#ffd9d5';$('onlineStatus').value=yes?'متصل':'غير متصل';}
 window.addEventListener('online',()=>{online();syncQueue()});window.addEventListener('offline',online);
-function doLogin(){ $('loginError').textContent='';run('login',[$('username').value,$('password').value],r=>{token=r.token;me=r;showApp()},e=>msg('loginError',e))}
+function doLogin(){ $('loginError').textContent='';run('login',[$('username').value,$('password').value],r=>{if(!r||!r.token)throw new Error('استجابة تسجيل الدخول غير مكتملة من الخادم');token=String(r.token);me=r;showApp()},e=>msg('loginError',e))}
 function showApp(){ $('login').classList.add('hidden');$('app').classList.remove('hidden');$('welcome').textContent='مرحباً '+me.username;$('role').textContent='الصلاحية: '+me.role;$('changeCard').classList.toggle('hidden',!me.mustChangePassword);$('mainArea').classList.toggle('hidden',!!me.mustChangePassword);$('createSessionCard').classList.toggle('hidden',!['admin','supervisor'].includes(me.role));$('usersTab').classList.toggle('hidden',me.role!=='admin');$('auditTab').classList.toggle('hidden',me.role!=='admin');$('catalogTab').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="usersTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="auditTab"]').classList.toggle('hidden',me.role!=='admin');document.querySelector('[data-tab="catalogTab"]').classList.toggle('hidden',me.role!=='admin');online();loadAll();syncQueue()}
 function loadAll(){loadAppData();loadCatalog();loadSessions();loadStats();if(me.role==='admin'){loadUsers();loadAudit()}}
 function tab(id,btn){document.querySelectorAll('.tabPanel').forEach(x=>x.classList.add('hidden'));$(id).classList.remove('hidden');document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');}
-function loadAppData(){run('getAppData',[token],d=>{branches=d.branches||[];warehouses=d.warehouses||[];const opts=branches.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');$('sessionBranch').innerHTML=opts;$('sessionBranch').onchange=renderSessionWarehouses;renderSessionWarehouses()},e=>console.error(e))}
-function renderSessionWarehouses(){const bid=$('sessionBranch').value;$('sessionWarehouse').innerHTML=warehouses.filter(w=>String(w.branchId)===String(bid)).map(w=>'<option value="'+esc(w.id)+'">'+esc(w.name)+'</option>').join('')}
-function loadStats(){run('getDashboardStats',[token],d=>{$('statUser').textContent=d.username;$('statSessions').textContent=d.sessions;$('statEmployees').textContent=d.employees;$('statItems').textContent=d.items},e=>console.error(e))}
-function loadSessions(){run('listInventorySessions',[token],rows=>{sessions=rows||[];const opts=sessions.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+' ('+esc(s.branchName)+' / '+esc(s.warehouseName)+') – '+(s.status==='open'?'مفتوحة':'مغلقة')+'</option>').join('');$('sessionSelect').innerHTML=opts;$('reportSession').innerHTML=opts;renderSessions();selectSession()},e=>console.error(e))}
-function renderSessions(){$('sessionRows').innerHTML=sessions.map(s=>'<tr><td>'+esc(s.name)+'</td><td>'+esc(s.branchName)+'</td><td>'+esc(s.warehouseName)+'</td><td>'+esc(s.createdAt||'')+'</td><td>'+s.count+'</td><td><span class="badge '+(s.status==='closed'?'closed':'')+'">'+(s.status==='open'?'مفتوحة':'مغلقة')+'</span></td><td><button class="alt" onclick="chooseSession(\''+esc(s.id)+'\')">فتح</button>'+(['admin','supervisor'].includes(me.role)?'<button onclick="setSessionStatus(\''+esc(s.id)+'\',\''+(s.status==='open'?'closed':'open')+'\')">'+(s.status==='open'?'إغلاق':'إعادة فتح')+'</button>':'')+'</td></tr>').join('')}
+function renderSessionWarehouses(){
+  warehouses=asArray(warehouses);
+  const branchSelect=$('sessionBranch'),warehouseSelect=$('sessionWarehouse');
+  if(!branchSelect||!warehouseSelect)return;
+  const bid=String(branchSelect.value||'').trim();
+  const matched=warehouses.filter(w=>w&&String(w.branchId||'').trim()===bid);
+
+  console.log('Selected Branch:', bid);
+  console.log('All Warehouses:', warehouses);
+  console.log('Matched Warehouses:', matched);
+
+  $('sessionWarehouse').innerHTML = matched.length
+    ? matched.map(w =>
+        '<option value="'+esc(w.id)+'">'+esc(w.name)+'</option>'
+      ).join('')
+    : '<option value="">لا توجد مخازن مرتبطة بهذا الفرع</option>';
+}
+
+function loadAppData(){
+  run('getAppData',[token],d=>{
+    console.log('App Data:', d);
+
+    if(!d||typeof d!=='object')throw new Error('استجابة بيانات الفروع والمخازن غير صالحة');
+    branches=asArray(d.branches);
+    warehouses=asArray(d.warehouses);
+    const opts=branches.filter(Boolean).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+
+    $('sessionBranch').innerHTML = opts;
+    $('sessionBranch').onchange = renderSessionWarehouses;
+
+    renderSessionWarehouses();
+
+  },e=>{
+    console.error('Load App Data Error:',e);
+    alert('حدث خطأ أثناء تحميل بيانات الفروع والمخازن');
+  });
+} 
+
+function loadStats(){run('getDashboardStats',[token],d=>{d=d&&typeof d==='object'?d:{};$('statUser').textContent=d.username||(me&&me.username)||'-';$('statSessions').textContent=Number(d.sessions)||0;$('statEmployees').textContent=Number(d.employees)||0;$('statItems').textContent=Number(d.items)||0},e=>console.error('Dashboard stats error:',e))}
+function loadSessions(){run('listInventorySessions',[token],rows=>{sessions=asArray(rows).filter(Boolean);const opts=sessions.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+' ('+esc(s.branchName)+' / '+esc(s.warehouseName)+') – '+(s.status==='open'?'مفتوحة':'مغلقة')+'</option>').join('');$('sessionSelect').innerHTML=opts||'<option value="">لا توجد عمليات جرد</option>';$('reportSession').innerHTML=opts||'<option value="">لا توجد عمليات جرد</option>';renderSessions();selectSession()},e=>console.error('Load sessions error:',e))}
+function renderSessions(){sessions=asArray(sessions);$('sessionRows').innerHTML=sessions.map(s=>'<tr><td>'+esc(s.name)+'</td><td>'+esc(s.branchName)+'</td><td>'+esc(s.warehouseName)+'</td><td>'+esc(s.createdAt||'')+'</td><td>'+s.count+'</td><td><span class="badge '+(s.status==='closed'?'closed':'')+'">'+(s.status==='open'?'مفتوحة':'مغلقة')+'</span></td><td><button class="alt" onclick="chooseSession(\''+esc(s.id)+'\')">فتح</button>'+(['admin','supervisor'].includes(me.role)?'<button onclick="setSessionStatus(\''+esc(s.id)+'\',\''+(s.status==='open'?'closed':'open')+'\')">'+(s.status==='open'?'إغلاق':'إعادة فتح')+'</button>':'')+'</td></tr>').join('')}
 function createSession(){const d={branchId:$('sessionBranch').value,warehouseId:$('sessionWarehouse').value,name:$('sessionName').value};run('adminCreateInventorySession',[token,d],r=>{$('sessionName').value='';$('sessionMessage').textContent='تم إنشاء عملية الجرد';loadSessions();loadStats()},e=>msg('sessionMessage',e))}
 function setSessionStatus(id,status){run('adminSetInventorySessionStatus',[token,id,status],()=>loadSessions(),e=>alert(e.message||e))}
 function chooseSession(id){$('sessionSelect').value=id;tab('countTab',document.querySelector('[data-tab="countTab"]'));selectSession()}
 function selectSession(){const s=sessions.find(x=>x.id===$('sessionSelect').value);$('activeSessionInfo').textContent=s?s.branchName+' / '+s.warehouseName+' – '+(s.status==='open'?'مفتوحة':'مغلقة'): 'اختر عملية جرد';loadSessionLines()}
-function loadSessionLines(){const id=$('sessionSelect').value;if(!id){lines=[];renderLines();return}run('listSessionLines',[token,id],rows=>{lines=rows||[];renderLines()},e=>console.error(e))}
-function renderLines(){const n=new Set(lines.map(x=>x.code)).size,total=catalog.length,pct=total?Math.round(n/total*100):0;$('progressText').textContent=n+' تم جردها من '+total+' | نسبة الإنجاز '+pct+'%';$('progressBar').style.width=Math.min(100,pct)+'%';$('lineRows').innerHTML=lines.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+x.qty+'</td><td>'+x.price+'</td><td>'+(x.qty*x.price).toFixed(2)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.batch)+'</td><td>'+esc(x.employee)+'</td><td>'+(['admin','supervisor'].includes(me.role)?'<button class="danger" onclick="deleteLine(\''+esc(x.id)+'\')">حذف</button>':'-')+'</td></tr>').join('')}
-function lookupItem(){const q=$('code').value.trim().toLowerCase(),x=catalog.find(i=>i.code.toLowerCase()===q||i.barcode.toLowerCase()===q);$('name').value=x?x.name:''}
-function saveCount(){const session=sessions.find(x=>x.id===$('sessionSelect').value);if(!session){$('saveMessage').textContent='اختر عملية جرد أولاً';return}const d={sessionId:session.id,code:$('code').value,name:$('name').value,qty:Number($('qty').value),price:Number($('price').value||0),expiry:$('expiry').value,batch:$('batch').value};if(!d.code||!Number.isFinite(d.qty)){msg('saveMessage','أدخل كود الصنف والكمية');return}if(!navigator.onLine){const q=JSON.parse(localStorage.getItem(queueKey)||'[]');q.push(d);localStorage.setItem(queueKey,JSON.stringify(q));$('saveMessage').textContent='تم حفظ الحركة محلياً في قائمة الانتظار';clearCountForm();return}run('saveSessionCount',[token,d],r=>{$('saveMessage').textContent='تم حفظ الجرد بنجاح';clearCountForm();loadSessionLines();loadSessions()},e=>{$('saveMessage').textContent='لم يتم حفظ الحركة على الخادم: '+(e.message||e)+'. راجع البيانات ثم أعد المحاولة؛ لم نضعها في قائمة الانتظار لتجنب تكرار الحركات.'})}
+function loadSessionLines(){const id=$('sessionSelect').value;if(!id){lines=[];renderLines();return}run('listSessionLines',[token,id],rows=>{lines=asArray(rows);renderLines()},e=>console.error('Load session lines error:',e))}
+function renderLines(){lines=asArray(lines);catalog=asArray(catalog);const n=new Set(lines.map(x=>x&&x.code).filter(Boolean)).size,total=catalog.length,pct=total?Math.round(n/total*100):0;$('progressText').textContent=n+' تم جردها من '+total+' | نسبة الإنجاز '+pct+'%';$('progressBar').style.width=Math.min(100,pct)+'%';$('lineRows').innerHTML=lines.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+x.qty+'</td><td>'+x.price+'</td><td>'+(x.qty*x.price).toFixed(2)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.batch)+'</td><td>'+esc(x.employee)+'</td><td>'+(['admin','supervisor'].includes(me.role)?'<button class="danger" onclick="deleteLine(\''+esc(x.id)+'\')">حذف</button>':'-')+'</td></tr>').join('')}
+function lookupItem(){const q=String($('code').value||'').trim().toLowerCase(),x=asArray(catalog).find(i=>i&&(String(i.code||'').toLowerCase()===q||String(i.barcode||'').toLowerCase()===q));$('name').value=x?String(x.name||''):''}
+function saveCount(){const session=sessions.find(x=>x.id===$('sessionSelect').value);if(!session){$('saveMessage').textContent='اختر عملية جرد أولاً';return}const qtyText=String($('qty').value||'').trim();const d={sessionId:session.id,code:String($('code').value||'').trim(),name:$('name').value,qty:Number(qtyText),price:Number($('price').value||0),expiry:$('expiry').value,batch:$('batch').value};if(!d.code||qtyText===''||!Number.isFinite(d.qty)||!Number.isFinite(d.price)||d.price<0){msg('saveMessage','أدخل كود الصنف والكمية');return}if(!navigator.onLine){const q=JSON.parse(localStorage.getItem(queueKey)||'[]');q.push(d);localStorage.setItem(queueKey,JSON.stringify(q));$('saveMessage').textContent='تم حفظ الحركة محلياً في قائمة الانتظار';clearCountForm();return}run('saveSessionCount',[token,d],r=>{$('saveMessage').textContent='تم حفظ الجرد بنجاح';clearCountForm();loadSessionLines();loadSessions()},e=>{$('saveMessage').textContent='لم يتم حفظ الحركة على الخادم: '+(e.message||e)+'. راجع البيانات ثم أعد المحاولة؛ لم نضعها في قائمة الانتظار لتجنب تكرار الحركات.'})}
 function clearCountForm(){['code','name','qty','expiry','batch','price'].forEach(id=>$(id).value='');$('code').focus()}
 function syncQueue(){if(!token||!navigator.onLine)return;const q=JSON.parse(localStorage.getItem(queueKey)||'[]');if(!q.length){$('syncState').textContent='لا توجد حركات معلقة';return}$('syncState').textContent='مزامنة '+q.length+' حركة...';const send=()=>{if(!q.length){localStorage.removeItem(queueKey);$('syncState').textContent='تمت المزامنة';loadSessions();loadSessionLines();return}const d=q[0];run('saveSessionCount',[token,d],()=>{q.shift();localStorage.setItem(queueKey,JSON.stringify(q));send()},e=>{$('syncState').textContent='توقفت المزامنة: '+(e.message||e);localStorage.setItem(queueKey,JSON.stringify(q))})};send()}
 function deleteLine(id){if(!confirm('هل تريد حذف حركة الجرد؟'))return;run('adminDeleteInventoryLine',[token,id],()=>loadSessionLines(),e=>alert(e.message||e))}
-function loadCatalog(){run('listCatalog',[token],rows=>{catalog=rows||[];$('itemHints').innerHTML=catalog.map(x=>'<option value="'+esc(x.code)+'">'+esc(x.name)+'</option><option value="'+esc(x.barcode)+'">'+esc(x.name)+'</option>').join('');renderCatalog();renderLines()},e=>console.error(e))}
-function renderCatalog(){const q=($('catalogSearch').value||'').toLowerCase();$('catalogRows').innerHTML=catalog.filter(x=>(x.code+' '+x.name+' '+x.barcode).toLowerCase().includes(q)).slice(0,500).map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.barcode)+'</td><td>'+esc(x.unit)+'</td><td>'+esc(x.category)+'</td></tr>').join('')}
+function loadCatalog(){run('listCatalog',[token],rows=>{catalog=asArray(rows);$('itemHints').innerHTML=catalog.map(x=>'<option value="'+esc(x.code)+'">'+esc(x.name)+'</option><option value="'+esc(x.barcode)+'">'+esc(x.name)+'</option>').join('');renderCatalog();renderLines()},e=>console.error(e))}
+function renderCatalog(){catalog=asArray(catalog);const q=($('catalogSearch').value||'').toLowerCase();$('catalogRows').innerHTML=catalog.filter(x=>x&&(x.code+' '+x.name+' '+x.barcode).toLowerCase().includes(q)).slice(0,500).map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.barcode)+'</td><td>'+esc(x.unit)+'</td><td>'+esc(x.category)+'</td></tr>').join('')}
 function saveCatalogItem(){const d={code:$('itemCode').value,name:$('itemName').value,barcode:$('itemBarcode').value,unit:$('itemUnit').value,category:$('itemCategory').value};run('adminSaveItem',[token,d],r=>{msg('catalogMessage',r.updated?'تم تحديث الصنف':'تمت إضافة الصنف');loadCatalog()},e=>msg('catalogMessage',e))}
 function parseCSV(t){const rows=[];let row=[],cell='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c==='"'&&t[i+1]==='"'){cell+='"';i++}else if(c==='"')q=false;else cell+=c}else if(c==='"')q=true;else if(c===','){row.push(cell);cell=''}else if(c==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell=''}else cell+=c}row.push(cell.replace(/\r$/,''));if(row.some(x=>x!==''))rows.push(row);return rows}
 function normalizeImportHeader(v){return String(v??'').replace(/^\uFEFF/,'').trim().toLowerCase().replace(/[\s_\-]+/g,'')}
@@ -110,13 +155,26 @@ function importCatalogFile(){
  }).catch(e=>msg('catalogMessage',e));
 }
 function createUser(){run('adminCreateUser',[token,$('newUser').value,$('newUserPass').value,$('newRole').value],()=>{msg('userMessage','تم إنشاء المستخدم');$('newUser').value='';$('newUserPass').value='';loadUsers()},e=>msg('userMessage',e))}
-function loadUsers(){run('adminListUsers',[token],rows=>{users=rows||[];$('userRows').innerHTML=users.map(u=>'<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+(u.active?'نشط':'موقوف')+'</td><td><button class="alt" onclick="toggleUser(\''+esc(u.id)+'\','+(!u.active)+')">'+(u.active?'إيقاف':'تفعيل')+'</button><button onclick="resetUser(\''+esc(u.id)+'\')">تغيير كلمة المرور</button><button class="danger" onclick="deleteUser(\''+esc(u.id)+'\')">حذف</button></td></tr>').join('')},e=>msg('userMessage',e))}
+function loadUsers(){run('adminListUsers',[token],rows=>{users=asArray(rows);$('userRows').innerHTML=users.map(u=>'<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+(u.active?'نشط':'موقوف')+'</td><td><button class="alt" onclick="toggleUser(\''+esc(u.id)+'\','+(!u.active)+')">'+(u.active?'إيقاف':'تفعيل')+'</button><button onclick="resetUser(\''+esc(u.id)+'\')">تغيير كلمة المرور</button><button class="danger" onclick="deleteUser(\''+esc(u.id)+'\')">حذف</button></td></tr>').join('')},e=>msg('userMessage',e))}
 function toggleUser(id,active){run('adminSetUserActive',[token,id,active],loadUsers,e=>alert(e.message||e))}
 function resetUser(id){const p=prompt('أدخل كلمة المرور الجديدة (10 أحرف على الأقل):');if(p===null)return;run('adminResetUserPassword',[token,id,p],()=>alert('تم تحديث كلمة المرور وسيُطلب من المستخدم تغييرها عند الدخول'),e=>alert(e.message||e))}
 function deleteUser(id){if(!confirm('تأكيد حذف المستخدم نهائياً؟'))return;run('adminDeleteUser',[token,id],loadUsers,e=>alert(e.message||e))}
-function loadReport(){const id=$('reportSession').value;if(!id)return;run('getInventoryReport',[token,id],r=>{reportData=r;$('reportSummary').textContent='العملية: '+r.session.name+' | عدد الحركات: '+r.totalLines+' | إجمالي القيمة: '+Number(r.totalValue).toFixed(2);$('reportRows').innerHTML=r.rows.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.batch)+'</td><td>'+x.qty+'</td><td>'+x.value.toFixed(2)+'</td><td>'+x.lines+'</td></tr>').join('')},e=>msg('reportSummary',e))}
-function exportReportCSV(){if(!reportData){alert('اعرض التقرير أولاً');return}const rows=[['الكود','الصنف','الصلاحية','التشغيلة','الكمية','القيمة','عدد الحركات'],...reportData.rows.map(x=>[x.code,x.name,x.expiry,x.batch,x.qty,x.value,x.lines])];const csv='\uFEFF'+rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='SMART-INVENTORY-report.csv';a.click();URL.revokeObjectURL(a.href)}
-function loadAudit(){run('listAuditLog',[token],rows=>{$('auditRows').innerHTML=rows.map(x=>'<tr><td>'+esc(x.actor)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.entity)+'</td><td>'+esc(x.entityId)+'</td><td>'+esc(x.time)+'</td><td>'+esc(x.details)+'</td></tr>').join('')},e=>console.error(e))}
+function loadReport(){const id=$('reportSession').value;if(!id)return;run('getInventoryReport',[token,id],r=>{if(!r||typeof r!=='object')throw new Error('استجابة التقرير غير صالحة');const reportRows=asArray(r.rows);if(!r.session)throw new Error('بيانات عملية الجرد غير موجودة في التقرير');reportData=Object.assign({},r,{rows:reportRows});$('reportSummary').textContent='العملية: '+(r.session.name||'')+' | عدد الحركات: '+(Number(r.totalLines)||0)+' | إجمالي القيمة: '+(Number(r.totalValue)||0).toFixed(2);$('reportRows').innerHTML=reportRows.map(x=>'<tr><td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.expiry)+'</td><td>'+esc(x.batch)+'</td><td>'+x.qty+'</td><td>'+x.value.toFixed(2)+'</td><td>'+x.lines+'</td></tr>').join('')},e=>msg('reportSummary',e))}
+function exportReportCSV(){if(!reportData){alert('اعرض التقرير أولاً');return}const rows=[['الكود','الصنف','الصلاحية','التشغيلة','الكمية','القيمة','عدد الحركات'],...asArray(reportData.rows).map(x=>[x.code,x.name,x.expiry,x.batch,x.qty,x.value,x.lines])];const csv='\uFEFF'+rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='SMART-INVENTORY-report.csv';a.click();URL.revokeObjectURL(a.href)}
+function loadAudit() {
+  run('listAuditLog', [token], rows => {
+    rows = asArray(rows);
+    $('auditRows').innerHTML = rows.map(x =>
+      '<tr><td>' + esc(x.actor) +
+      '</td><td>' + esc(x.action) +
+      '</td><td>' + esc(x.entity) +
+      '</td><td>' + esc(x.entityId) +
+      '</td><td>' + esc(x.time) +
+      '</td><td>' + esc(x.details) +
+      '</td></tr>'
+    ).join('');
+  }, e => console.error('Audit loading error:', e));
+}
 function changePass(){if($('newPass').value!==$('confirmPass').value){msg('changeMsg','تأكيد كلمة المرور غير مطابق');return}run('changePassword',[token,$('oldPass').value,$('newPass').value],()=>{me.mustChangePassword=false;$('changeCard').classList.add('hidden');$('mainArea').classList.remove('hidden');loadAll()},e=>msg('changeMsg',e))}
 function doLogout(){run('logout',[token],()=>{},()=>{});token='';me=null;$('app').classList.add('hidden');$('login').classList.remove('hidden')}
 online();
