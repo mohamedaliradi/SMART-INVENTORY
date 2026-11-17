@@ -241,10 +241,13 @@ function adminSaveWarehouse(token,warehouse) {
 /* ===== Restored full inventory workflow APIs (additive; existing rows are preserved) ===== */
 function ensureInventoryExtraColumns_() {
   const sh=db_().getSheetByName('InventoryLines');
-  const last=sh.getLastColumn();
-  const headers=sh.getRange(1,1,1,Math.max(last,14)).getValues()[0];
-  if (!headers[14]) sh.getRange(1,15).setValue('batch_number');
-  if (!headers[15]) sh.getRange(1,16).setValue('expiry_month_year');
+  const headers=sh.getRange(1,1,1,16).getValues()[0];
+  const expected=[['batch_number',15],['expiry_month_year',16]];
+  expected.forEach(([name,col])=>{
+    const current=String(headers[col-1]||'').trim();
+    if(current && current!==name) throw new Error('تعارض في عنوان العمود '+col+' بورقة InventoryLines؛ لم نغيّر البيانات.');
+    if(!current) sh.getRange(1,col).setValue(name);
+  });
   return sh;
 }
 function listInventorySessions(token) {
@@ -296,12 +299,17 @@ function saveSessionCount(token, data) {
   const catalog=ss.getSheetByName('Items').getDataRange().getValues().slice(1);
   const item=catalog.find(r=>String(r[2]).trim().toLowerCase()===code.toLowerCase()||String(r[1]).trim().toLowerCase()===code.toLowerCase());
   if(!item) throw new Error('الصنف غير موجود في الملف الرئيسي.');
-  const sh=ensureInventoryExtraColumns_(), id=Utilities.getUuid();
-  const expiry=String(data.expiry||'').trim(), batch=String(data.batch||'').trim();
-  const row=[id,sessionId,item[0],item[2],item[3],qty,price,expiry,String(inv[1]),s.username,new Date(),String(data.notes||'').slice(0,300),String(inv[2]),'',batch,expiry];
-  sh.appendRow(row);
-  audit_(s.username,'CREATE','InventoryLines',id,'session='+sessionId+'; code='+item[2]+'; qty='+qty);
-  return {ok:true,id,itemName:String(item[3])};
+  const lock=LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const sh=ensureInventoryExtraColumns_(), id=Utilities.getUuid();
+    const expiry=String(data.expiry||'').trim(), batch=String(data.batch||'').trim();
+    const branch=ss.getSheetByName('Branches').getDataRange().getValues().slice(1).find(r=>String(r[0])===String(inv[1]));
+    const warehouse=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1).find(r=>String(r[0])===String(inv[2]));
+    const row=[id,sessionId,item[0],item[2],item[3],qty,price,expiry,branch?String(branch[1]):String(inv[1]),s.username,new Date(),String(data.notes||'').slice(0,300),String(inv[2]),warehouse?String(warehouse[2]):'',batch,expiry];
+    sh.appendRow(row);
+    audit_(s.username,'CREATE','InventoryLines',id,'session='+sessionId+'; code='+item[2]+'; qty='+qty);
+    return {ok:true,id,itemName:String(item[3])};
+  } finally { lock.releaseLock(); }
 }
 function listSessionLines(token, sessionId) {
   session_(token);
