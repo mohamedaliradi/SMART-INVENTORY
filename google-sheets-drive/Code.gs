@@ -236,3 +236,124 @@ function adminSaveWarehouse(token,warehouse) {
   audit_(s.username,idx>0?'UPDATE':'CREATE','Warehouses',id,'branch='+branchId+'; name='+name);
   return {ok:true,id,updated:idx>0};
 }
+
+
+/* ===== Restored full inventory workflow APIs (additive; existing rows are preserved) ===== */
+function ensureInventoryExtraColumns_() {
+  const sh=db_().getSheetByName('InventoryLines');
+  const last=sh.getLastColumn();
+  const headers=sh.getRange(1,1,1,Math.max(last,14)).getValues()[0];
+  if (!headers[14]) sh.getRange(1,15).setValue('batch_number');
+  if (!headers[15]) sh.getRange(1,16).setValue('expiry_month_year');
+  return sh;
+}
+function listInventorySessions(token) {
+  const s=session_(token);
+  const ss=db_(), rows=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1);
+  const branches=ss.getSheetByName('Branches').getDataRange().getValues().slice(1);
+  const warehouses=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1);
+  const lines=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1);
+  return rows.filter(r=>r[0]).map(r=>{
+    const id=String(r[0]), br=branches.find(x=>String(x[0])===String(r[1])), wh=warehouses.find(x=>String(x[0])===String(r[2]));
+    const count=lines.filter(x=>String(x[1])===id).length;
+    return {id,branchId:String(r[1]||''),branchName:br?String(br[1]):'',warehouseId:String(r[2]||''),warehouseName:wh?String(wh[2]):'',name:String(r[3]||''),status:String(r[4]||'open'),createdBy:String(r[5]||''),createdAt:r[6],count};
+  }).reverse();
+}
+function adminCreateInventorySession(token, data) {
+  const s=session_(token); requireRole_(s,['admin','supervisor']);
+  data=data||{};
+  const branchId=String(data.branchId||''), warehouseId=String(data.warehouseId||''), name=String(data.name||'').trim();
+  if(!branchId||!warehouseId||!name) throw new Error('اختر الفرع والمخزن واكتب اسم عملية الجرد.');
+  const ss=db_(), br=ss.getSheetByName('Branches').getDataRange().getValues().slice(1).find(r=>String(r[0])===branchId&&(r[2]===true||String(r[2]).toLowerCase()==='true'));
+  const wh=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1).find(r=>String(r[0])===warehouseId&&String(r[1])===branchId&&(r[3]===true||String(r[3]).toLowerCase()==='true'));
+  if(!br||!wh) throw new Error('الفرع أو المخزن غير صحيح.');
+  const id=Utilities.getUuid();
+  ss.getSheetByName('InventorySessions').appendRow([id,branchId,warehouseId,name,'open',s.username,new Date()]);
+  audit_(s.username,'CREATE','InventorySessions',id,'name='+name);
+  return {ok:true,id};
+}
+function adminSetInventorySessionStatus(token, sessionId, status) {
+  const s=session_(token); requireRole_(s,['admin','supervisor']);
+  status=String(status||'');
+  if(['open','closed'].indexOf(status)<0) throw new Error('حالة العملية غير صحيحة.');
+  const sh=db_().getSheetByName('InventorySessions'), values=sh.getDataRange().getValues();
+  const idx=values.findIndex((r,i)=>i>0&&String(r[0])===String(sessionId));
+  if(idx<1) throw new Error('عملية الجرد غير موجودة.');
+  sh.getRange(idx+1,5).setValue(status);
+  audit_(s.username,status==='closed'?'CLOSE':'REOPEN','InventorySessions',sessionId,'');
+  return {ok:true};
+}
+function saveSessionCount(token, data) {
+  const s=session_(token); requireRole_(s,['admin','supervisor','employee']);
+  if(s.mustChange) throw new Error('يجب تغيير كلمة المرور أولاً.');
+  data=data||{};
+  const sessionId=String(data.sessionId||''), code=String(data.code||'').trim(), qty=Number(data.qty), price=Number(data.price||0);
+  if(!sessionId||!code||!Number.isFinite(qty)||!Number.isFinite(price)||price<0) throw new Error('راجع العملية والكود والكمية والسعر.');
+  const ss=db_(), sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1);
+  const inv=sessions.find(r=>String(r[0])===sessionId);
+  if(!inv) throw new Error('عملية الجرد غير موجودة.');
+  if(String(inv[4])!=='open') throw new Error('عملية الجرد مغلقة ولا تقبل حركات جديدة.');
+  const catalog=ss.getSheetByName('Items').getDataRange().getValues().slice(1);
+  const item=catalog.find(r=>String(r[2]).trim().toLowerCase()===code.toLowerCase()||String(r[1]).trim().toLowerCase()===code.toLowerCase());
+  if(!item) throw new Error('الصنف غير موجود في الملف الرئيسي.');
+  const sh=ensureInventoryExtraColumns_(), id=Utilities.getUuid();
+  const expiry=String(data.expiry||'').trim(), batch=String(data.batch||'').trim();
+  const row=[id,sessionId,item[0],item[2],item[3],qty,price,expiry,String(inv[1]),s.username,new Date(),String(data.notes||'').slice(0,300),String(inv[2]),'',batch,expiry];
+  sh.appendRow(row);
+  audit_(s.username,'CREATE','InventoryLines',id,'session='+sessionId+'; code='+item[2]+'; qty='+qty);
+  return {ok:true,id,itemName:String(item[3])};
+}
+function listSessionLines(token, sessionId) {
+  session_(token);
+  const rows=db_().getSheetByName('InventoryLines').getDataRange().getValues().slice(1);
+  return rows.filter(r=>r[0]&&String(r[1])===String(sessionId)).map(r=>({id:String(r[0]),code:String(r[3]||''),name:String(r[4]||''),qty:Number(r[5]||0),price:Number(r[6]||0),expiry:String(r[15]||r[7]||''),batch:String(r[14]||''),employee:String(r[9]||''),time:r[10]})).reverse();
+}
+function adminDeleteInventoryLine(token, lineId) {
+  const s=session_(token); requireRole_(s,['admin','supervisor']);
+  const sh=db_().getSheetByName('InventoryLines'), values=sh.getDataRange().getValues();
+  const idx=values.findIndex((r,i)=>i>0&&String(r[0])===String(lineId));
+  if(idx<1) throw new Error('حركة الجرد غير موجودة.');
+  sh.deleteRow(idx+1); audit_(s.username,'DELETE','InventoryLines',lineId,''); return {ok:true};
+}
+function getDashboardStats(token) {
+  const s=session_(token), ss=db_();
+  const countRows=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1).filter(r=>r[0]);
+  const users=userRows_().filter(u=>u.active&&u.role!=='admin').length;
+  const items=ss.getSheetByName('Items').getDataRange().getValues().slice(1).filter(r=>r[0]&&(r[6]===true||String(r[6]).toLowerCase()==='true')).length;
+  const lines=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1).filter(r=>r[0]);
+  return {username:s.username,sessions:countRows.length,employees:users,items,counts:lines.length};
+}
+function getInventoryReport(token, sessionId) {
+  session_(token);
+  const ss=db_(), sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1);
+  const inv=sessions.find(r=>String(r[0])===String(sessionId));
+  if(!inv) throw new Error('عملية الجرد غير موجودة.');
+  const rows=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(sessionId));
+  const map={};
+  rows.forEach(r=>{const k=String(r[3]||'');if(!map[k])map[k]={code:k,name:String(r[4]||''),qty:0,value:0,lines:0};map[k].qty+=Number(r[5]||0);map[k].value+=Number(r[5]||0)*Number(r[6]||0);map[k].lines++;});
+  return {session:{id:String(inv[0]),name:String(inv[3]),status:String(inv[4])},rows:Object.keys(map).map(k=>map[k]),totalLines:rows.length,totalValue:rows.reduce((a,r)=>a+Number(r[5]||0)*Number(r[6]||0),0)};
+}
+function listAuditLog(token) {
+  const s=session_(token); requireRole_(s,['admin']);
+  const rows=db_().getSheetByName('AuditLog').getDataRange().getValues().slice(1);
+  return rows.filter(r=>r[0]).slice(-500).reverse().map(r=>({actor:String(r[1]),action:String(r[2]),entity:String(r[3]),entityId:String(r[4]),time:r[5],details:String(r[6]||'')}));
+}
+function adminDeleteUser(token, userId) {
+  const s=session_(token); requireRole_(s,['admin']);
+  const users=userRows_(), u=users.find(x=>String(x.id)===String(userId));
+  if(!u) throw new Error('المستخدم غير موجود.');
+  if(u.username===s.username) throw new Error('لا يمكن حذف حساب المدير المستخدم حالياً.');
+  if(u.role==='admin'&&users.filter(x=>x.role==='admin'&&x.active).length<=1) throw new Error('لا يمكن حذف آخر مدير نشط.');
+  db_().getSheetByName('Users').deleteRow(u.row);
+  audit_(s.username,'DELETE','Users',userId,'username='+u.username); return {ok:true};
+}
+function adminResetUserPassword(token, userId, newPassword) {
+  const s=session_(token); requireRole_(s,['admin']);
+  if(String(newPassword||'').length<10) throw new Error('كلمة المرور يجب ألا تقل عن 10 أحرف.');
+  const u=userRows_().find(x=>String(x.id)===String(userId));
+  if(!u) throw new Error('المستخدم غير موجود.');
+  const salt=randomToken_(), sh=db_().getSheetByName('Users');
+  sh.getRange(u.row,3,1,2).setValues([[passwordHash_(newPassword,salt),salt]]);
+  sh.getRange(u.row,7).setValue(true); sh.getRange(u.row,9).setValue(new Date());
+  audit_(s.username,'RESET_PASSWORD','Users',userId,'username='+u.username); return {ok:true};
+}
