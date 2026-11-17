@@ -337,8 +337,16 @@ function getInventoryReport(token, sessionId) {
   const inv=sessions.find(r=>String(r[0])===String(sessionId));
   if(!inv) throw new Error('عملية الجرد غير موجودة.');
   const rows=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(sessionId));
+  // Keep each batch/expiry combination separate so traceability is not lost.
   const map={};
-  rows.forEach(r=>{const k=String(r[3]||'');if(!map[k])map[k]={code:k,name:String(r[4]||''),qty:0,value:0,lines:0};map[k].qty+=Number(r[5]||0);map[k].value+=Number(r[5]||0)*Number(r[6]||0);map[k].lines++;});
+  rows.forEach(r=>{
+    const code=String(r[3]||''), expiry=String(r[15]||r[7]||''), batch=String(r[14]||'');
+    const key=[code,expiry,batch].join('\\u001f');
+    if(!map[key]) map[key]={code,name:String(r[4]||''),expiry,batch,qty:0,value:0,lines:0};
+    map[key].qty+=Number(r[5]||0);
+    map[key].value+=Number(r[5]||0)*Number(r[6]||0);
+    map[key].lines++;
+  });
   return {session:{id:String(inv[0]),name:String(inv[3]),status:String(inv[4])},rows:Object.keys(map).map(k=>map[k]),totalLines:rows.length,totalValue:rows.reduce((a,r)=>a+Number(r[5]||0)*Number(r[6]||0),0)};
 }
 function listAuditLog(token) {
