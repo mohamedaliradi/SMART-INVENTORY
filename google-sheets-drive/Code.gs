@@ -251,16 +251,62 @@ function ensureInventoryExtraColumns_() {
   return sh;
 }
 function listInventorySessions(token) {
-  const s=session_(token);
-  const ss=db_(), rows=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1);
-  const branches=ss.getSheetByName('Branches').getDataRange().getValues().slice(1);
-  const warehouses=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1);
-  const lines=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1);
-  return rows.filter(r=>r[0]).map(r=>{
-    const id=String(r[0]), br=branches.find(x=>String(x[0])===String(r[1])), wh=warehouses.find(x=>String(x[0])===String(r[2]));
-    const count=lines.filter(x=>String(x[1])===id).length;
-    return {id,branchId:String(r[1]||''),branchName:br?String(br[1]):'',warehouseId:String(r[2]||''),warehouseName:wh?String(wh[2]):'',name:String(r[3]||''),status:String(r[4]||'open'),createdBy:String(r[5]||''),createdAt:r[6],count};
+  session_(token);
+  const ss=db_();
+  const sessionSheet=ss.getSheetByName('InventorySessions');
+  const branchSheet=ss.getSheetByName('Branches');
+  const warehouseSheet=ss.getSheetByName('Warehouses');
+  const lineSheet=ss.getSheetByName('InventoryLines');
+  if(!sessionSheet || !branchSheet || !warehouseSheet || !lineSheet) {
+    throw new Error('إحدى أوراق بيانات الجرد غير موجودة: InventorySessions / Branches / Warehouses / InventoryLines');
+  }
+  const readTable = sh => {
+    const values=sh.getDataRange().getValues();
+    const headers=(values[0]||[]).map(v=>String(v||'').trim());
+    const index={}; headers.forEach((h,i)=>{if(h)index[h]=i;});
+    return {rows:values.slice(1),index,lastRow:sh.getLastRow(),headers};
+  };
+  const sessions=readTable(sessionSheet), branches=readTable(branchSheet);
+  const warehouses=readTable(warehouseSheet), lines=readTable(lineSheet);
+  const col=(table,name,fallback)=>Object.prototype.hasOwnProperty.call(table.index,name)?table.index[name]:fallback;
+  const sid=col(sessions,'session_id',0), sb=col(sessions,'branch_id',1), sw=col(sessions,'warehouse_id',2);
+  const sn=col(sessions,'session_name',3), st=col(sessions,'status',4), su=col(sessions,'created_by',5), sd=col(sessions,'created_at',6);
+  const bid=col(branches,'branch_id',0), bn=col(branches,'branch_name',1);
+  const wid=col(warehouses,'warehouse_id',0), wb=col(warehouses,'branch_id',1), wn=col(warehouses,'warehouse_name',2);
+  const lid=col(lines,'session_id',1);
+  const branchRows=branches.rows, warehouseRows=warehouses.rows, lineRows=lines.rows;
+  const result=sessions.rows.filter(r=>String(r[sid]||'').trim()).map(r=>{
+    const id=String(r[sid]).trim(), branchId=String(r[sb]||'').trim(), warehouseId=String(r[sw]||'').trim();
+    const br=branchRows.find(x=>String(x[bid]||'').trim()===branchId);
+    const wh=warehouseRows.find(x=>String(x[wid]||'').trim()===warehouseId && String(x[wb]||'').trim()===branchId);
+    return {
+      id,branchId,branchName:br?String(br[bn]||''):'',
+      warehouseId,warehouseName:wh?String(wh[wn]||''):'',
+      name:String(r[sn]||''),status:String(r[st]||'open'),
+      createdBy:String(r[su]||''),createdAt:r[sd],
+      count:lineRows.filter(x=>String(x[lid]||'').trim()===id).length
+    };
   }).reverse();
+  console.log('SMART INVENTORY listInventorySessions:',JSON.stringify({
+    spreadsheetId:ss.getId(),sheet:sessionSheet.getName(),lastRow:sessions.lastRow,
+    headers:sessions.headers,returned:result.length,sessionIds:result.map(x=>x.id)
+  }));
+  return result;
+}
+function getInventorySessionsDiagnostics(token) {
+  const s=session_(token); requireRole_(s,['admin']);
+  const ss=db_(), sh=ss.getSheetByName('InventorySessions');
+  if(!sh) return {ok:false,spreadsheetId:ss.getId(),sheetExists:false};
+  const values=sh.getDataRange().getDisplayValues();
+  return {
+    ok:true,spreadsheetId:ss.getId(),sheetExists:true,sheetName:sh.getName(),
+    lastRow:sh.getLastRow(),headers:values.length?values[0]:[],
+    dataRows:Math.max(0,values.length-1),
+    sessions:values.slice(1).filter(r=>String(r[0]||'').trim()).map(r=>({
+      id:String(r[0]),branchId:String(r[1]||''),warehouseId:String(r[2]||''),
+      name:String(r[3]||''),status:String(r[4]||'')
+    }))
+  };
 }
 function adminCreateInventorySession(token, data) {
   const s=session_(token); requireRole_(s,['admin','supervisor']);
