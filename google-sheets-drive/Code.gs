@@ -14,7 +14,7 @@ const APP_CONFIG = Object.freeze({
     { name: 'Warehouses', headers: ['warehouse_id','branch_id','warehouse_name','is_active'] },
     { name: 'Items', headers: ['item_id','barcode','item_code','item_name','unit','category','is_active','updated_at'] },
     { name: 'InventorySessions', headers: ['session_id','branch_id','warehouse_id','session_name','status','created_by','created_at'] },
-    { name: 'InventoryLines', headers: ['line_id','session_id','item_id','item_code','item_name','counted_qty','unit_price','expiry_date','branch_name','employee_username','counted_at','notes'] },
+    { name: 'InventoryLines', headers: ['line_id','session_id','item_id','item_code','item_name','counted_qty','unit_price','expiry_date','branch_name','employee_username','counted_at','notes','warehouse_id','warehouse_name'] },
     { name: 'AuditLog', headers: ['event_id','actor','action','entity','entity_id','event_time','details'] },
     { name: 'Settings', headers: ['setting_key','setting_value','updated_at'] }
   ]
