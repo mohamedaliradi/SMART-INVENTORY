@@ -6,7 +6,7 @@
 const APP_CONFIG = Object.freeze({
   SPREADSHEET_NAME: 'SMART INVENTORY - Central Database',
   DRIVE_FOLDER_NAME: 'SMART INVENTORY - Reports and Backups',
-  SESSION_TTL_SECONDS: 21600,
+  SESSION_TTL_SECONDS: 3600,
   PBKDF2_ITERATIONS: 12000,
   SHEETS: [
     { name: 'Users', headers: ['user_id','username','password_hash','password_salt','role','is_active','must_change_password','created_at','updated_at'] },
@@ -105,6 +105,10 @@ function session_(token) {
   return JSON.parse(raw);
 }
 function logout(token) { const s=session_(token); CacheService.getScriptCache().remove('session_'+token); audit_(s.username,'LOGOUT','Users',s.username,''); return true; }
+function getSessionUser(token) {
+  const s=session_(token);
+  return {token:String(token),username:s.username,role:s.role,mustChangePassword:!!s.mustChange};
+}
 function changePassword(token,currentPassword,newPassword) {
   const s=session_(token); if(String(newPassword||'').length<10) throw new Error('كلمة المرور الجديدة يجب ألا تقل عن 10 أحرف.');
   const u=userRows_().find(x=>x.username===s.username); if(!u || passwordHash_(String(currentPassword||''),u.salt)!==u.hash) throw new Error('كلمة المرور الحالية غير صحيحة.');
