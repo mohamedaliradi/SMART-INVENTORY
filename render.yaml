@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: smart-inventory
+    runtime: docker
+    rootDir: SMART_INVENTORY_RELEASE_CANDIDATE/SMART_INVENTORY_COMPLETE/backend
+    plan: starter
+    healthCheckPath: /
+    disk:
+      name: smart-inventory-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_FULL_NAME
+        value: مدير النظام
