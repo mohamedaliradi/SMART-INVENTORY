@@ -370,10 +370,11 @@ function getDashboardStats(token) {
   return {username:s.username,sessions:countRows.length,employees:users,items,counts:lines.length};
 }
 function getInventoryReport(token, sessionId) {
-  session_(token);
+  const current=session_(token);
   const ss=db_(), sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1);
   const inv=sessions.find(r=>String(r[0])===String(sessionId));
   if(!inv) throw new Error('عملية الجرد غير موجودة.');
+  if(!scopeAllows_(current,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لهذا الفرع أو المخزن.');
   const rows=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(sessionId));
   // Keep each batch, expiry date and unit-price combination separate for traceability.
   const map={};
