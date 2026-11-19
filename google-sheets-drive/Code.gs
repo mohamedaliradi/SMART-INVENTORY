@@ -426,3 +426,48 @@ function adminResetUserPassword(token, userId, newPassword) {
   sh.getRange(u.row,7).setValue(true); sh.getRange(u.row,9).setValue(new Date());
   audit_(s.username,'RESET_PASSWORD','Users',userId,'username='+u.username); return {ok:true};
 }
+
+/* Opening balances and counted-vs-book variance; additive sheet, existing data preserved. */
+function openingBalancesSheet_() {
+  const ss=db_(); let sh=ss.getSheetByName('OpeningBalances');
+  const headers=['balance_id','branch_id','warehouse_id','item_code','item_name','opening_qty','unit_price','expiry_month_year','batch_number','updated_at','updated_by'];
+  if(!sh) { sh=ss.insertSheet('OpeningBalances'); sh.getRange(1,1,1,headers.length).setValues([headers]); sh.setFrozenRows(1); return sh; }
+  const current=sh.getRange(1,1,1,headers.length).getValues()[0].map(v=>String(v||'').trim());
+  for(let i=0;i<headers.length;i++) { if(current[i]&&current[i]!==headers[i]) throw new Error('تعارض في عناوين ورقة الرصيد الافتتاحي عند العمود '+(i+1)+'؛ لم يتم تعديل أي بيانات.'); if(!current[i]) sh.getRange(1,i+1).setValue(headers[i]); }
+  return sh;
+}
+function adminImportOpeningBalances(token, branchId, warehouseId, items) {
+  const s=session_(token); requireRole_(s,['admin','supervisor']);
+  branchId=String(branchId||'').trim(); warehouseId=String(warehouseId||'').trim();
+  if(!Array.isArray(items)||!items.length) throw new Error('ملف الرصيد الافتتاحي لا يحتوي على أصناف.');
+  if(items.length>20000) throw new Error('الحد الأقصى 20000 صف في عملية الاستيراد.');
+  const ss=db_(), br=ss.getSheetByName('Branches').getDataRange().getValues().slice(1).find(r=>String(r[0])===branchId&&(r[2]===true||String(r[2]).toLowerCase()==='true'));
+  const wh=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1).find(r=>String(r[0])===warehouseId&&String(r[1])===branchId&&(r[3]===true||String(r[3]).toLowerCase()==='true'));
+  if(!br||!wh) throw new Error('الفرع أو المخزن غير صحيح.');
+  const sh=openingBalancesSheet_(), values=sh.getDataRange().getValues(), index={};
+  values.slice(1).forEach((r,i)=>{const k=[r[1],r[2],r[3],r[7],r[8]].map(x=>String(x||'').trim().toLowerCase()).join('|');if(k!=='||||')index[k]=i+2;});
+  const seen={}, updates=[], adds=[]; let skipped=0;
+  items.forEach(it=>{const code=String(it.code||'').trim(),name=String(it.name||'').trim(),qty=Number(it.qty),price=Number(it.price||0);
+    if(!code||!name||it.qty===null||typeof it.qty==='undefined'||String(it.qty).trim()===''||!Number.isFinite(qty)||!Number.isFinite(price)||price<0){skipped++;return;}
+    const expiry=String(it.expiry||'').trim(),batch=String(it.batch||'').trim(),key=[branchId,warehouseId,code,expiry,batch].map(x=>String(x).trim().toLowerCase()).join('|');
+    if(seen[key]){skipped++;return;}seen[key]=true;
+    const row=[index[key]?values[index[key]-1][0]:Utilities.getUuid(),branchId,warehouseId,code,name,qty,price,expiry,batch,new Date(),s.username];
+    if(index[key])updates.push({row:index[key],data:row});else adds.push(row);
+  });
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try{updates.forEach(x=>sh.getRange(x.row,1,1,x.data.length).setValues([x.data]));if(adds.length)sh.getRange(sh.getLastRow()+1,1,adds.length,adds[0].length).setValues(adds);
+    audit_(s.username,'IMPORT','OpeningBalances',branchId+'/'+warehouseId,'updated='+updates.length+'; added='+adds.length+'; skipped='+skipped);
+    return {ok:true,added:adds.length,updated:updates.length,skipped};
+  }finally{lock.releaseLock();}
+}
+function getStockVarianceReport(token, sessionId) {
+  session_(token);const ss=db_(),sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1),inv=sessions.find(r=>String(r[0])===String(sessionId));
+  if(!inv)throw new Error('عملية الجرد غير موجودة.');
+  const balances=openingBalancesSheet_().getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(inv[1])&&String(r[2])===String(inv[2]));
+  const counted=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(sessionId)),map={};
+  const keyOf=(c,e,b)=>[c,e,b].map(x=>String(x||'').trim()).join('\u001f');
+  balances.forEach(r=>{const code=String(r[3]||''),expiry=String(r[7]||''),batch=String(r[8]||''),key=keyOf(code,expiry,batch);if(!map[key])map[key]={code,name:String(r[4]||''),expiry,batch,openingQty:0,countedQty:0,price:Number(r[6]||0)};map[key].openingQty+=Number(r[5]||0);});
+  counted.forEach(r=>{const code=String(r[3]||''),expiry=String(r[15]||r[7]||''),batch=String(r[14]||''),key=keyOf(code,expiry,batch);if(!map[key])map[key]={code,name:String(r[4]||''),expiry,batch,openingQty:0,countedQty:0,price:Number(r[6]||0)};map[key].countedQty+=Number(r[5]||0);if(!map[key].price)map[key].price=Number(r[6]||0);});
+  const rows=Object.keys(map).map(k=>{const x=map[k],difference=x.countedQty-x.openingQty;return Object.assign({},x,{difference,openingValue:x.openingQty*x.price,countedValue:x.countedQty*x.price,differenceValue:difference*x.price});});
+  return {session:{id:String(inv[0]),name:String(inv[3]),branchId:String(inv[1]),warehouseId:String(inv[2])},rows,totalItems:rows.length,totalOpeningValue:rows.reduce((a,x)=>a+x.openingValue,0),totalCountedValue:rows.reduce((a,x)=>a+x.countedValue,0),totalDifferenceValue:rows.reduce((a,x)=>a+x.differenceValue,0),matchedOpeningRows:balances.length,countedLines:counted.length};
+}
