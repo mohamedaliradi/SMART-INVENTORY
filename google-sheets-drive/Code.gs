@@ -174,24 +174,8 @@ function adminSetUserActive(token,userId,active) {
 
 
 /** Master catalog: non-destructive upsert by item code. */
-function listCatalog(token) {
-  session_(token);
-  const rows=db_().getSheetByName('Items').getDataRange().getValues().slice(1);
-  return rows.filter(r=>r[0] && (r[6]===true || String(r[6]).toLowerCase()==='true'))
-    .map(r=>({id:String(r[0]),barcode:String(r[1]||''),code:String(r[2]||''),name:String(r[3]||''),unit:String(r[4]||''),category:String(r[5]||'')}));
-}
-function adminSaveItem(token,item) {
-  const s=session_(token); requireRole_(s,['admin']);
-  item=item||{};
-  const code=String(item.code||'').trim(), name=String(item.name||'').trim();
-  if(!code || !name) throw new Error('كود الصنف واسمه مطلوبان.');
-  const sh=db_().getSheetByName('Items'), values=sh.getDataRange().getValues();
-  const idx=values.findIndex((r,i)=>i>0 && String(r[2]||'').trim().toLowerCase()===code.toLowerCase());
-  const row=[idx>0?values[idx][0]:Utilities.getUuid(),String(item.barcode||'').trim(),code,name,String(item.unit||'').trim(),String(item.category||'').trim(),true,new Date()];
-  if(idx>0) sh.getRange(idx+1,1,1,row.length).setValues([row]); else sh.appendRow(row);
-  audit_(s.username,idx>0?'UPDATE':'CREATE','Items',row[0],'code='+code);
-  return {ok:true,updated:idx>0};
-}
+function listCatalog(token) {session_(token);const pc=ensureItemPriceColumn_(),rows=db_().getSheetByName('Items').getDataRange().getValues().slice(1);return rows.filter(r=>r[0]&&(r[6]===true||String(r[6]).toLowerCase()==='true')).map(r=>({id:String(r[0]),barcode:String(r[1]||''),code:String(r[2]||''),name:String(r[3]||''),unit:String(r[4]||''),category:String(r[5]||''),price:Number(r[pc]||0)}));}
+function adminSaveItem(token,item){const s=session_(token);requireRole_(s,['admin']);item=item||{};const code=String(item.code||'').trim(),name=String(item.name||'').trim(),price=Number(item.price||0);if(!code||!name||!Number.isFinite(price)||price<0)throw new Error('كود الصنف واسمه وسعره مطلوبون بشكل صحيح.');const sh=db_().getSheetByName('Items'),v=sh.getDataRange().getValues(),i=v.findIndex((r,n)=>n>0&&String(r[2]||'').trim().toLowerCase()===code.toLowerCase()),old=i>0?v[i]:[],pc=ensureItemPriceColumn_(),row=[i>0?old[0]:Utilities.getUuid(),String(item.barcode||old[1]||'').trim(),code,name,String(item.unit||old[4]||''),String(item.category||old[5]||''),true,new Date()];while(row.length<pc)row.push('');row[pc]=price;if(i>0)sh.getRange(i+1,1,1,row.length).setValues([row]);else sh.appendRow(row);audit_(s.username,i>0?'UPDATE':'CREATE','Items',row[0],'code='+code+'; price='+price);return {ok:true,updated:i>0};}
 function adminImportItems(token,items) {
   const s=session_(token); requireRole_(s,['admin']);
   if(!Array.isArray(items) || !items.length) throw new Error('لم يتم العثور على أصناف صالحة للاستيراد.');
@@ -207,10 +191,7 @@ function adminImportItems(token,items) {
       const key=code.toLowerCase(); if(seen[key]){skipped++;return;} seen[key]=true;
       const oldRow=index[key];
       const old=oldRow?values[oldRow]:[];
-      const row=[oldRow?old[0]:Utilities.getUuid(),
-        String(item.barcode|| (old[1]||'')).trim(),code,name,
-        String(item.unit|| (old[4]||'')).trim(),String(item.category|| (old[5]||'')).trim(),
-        true,new Date()];
+      const pc=ensureItemPriceColumn_(),price=item.price===''||item.price===null||typeof item.price==='undefined'?Number(old[pc]||0):Number(item.price);if(!Number.isFinite(price)||price<0){skipped++;return;}const row=[oldRow?old[0]:Utilities.getUuid(),String(item.barcode||old[1]||'').trim(),code,name,String(item.unit||old[4]||'').trim(),String(item.category||old[5]||'').trim(),true,new Date()];while(row.length<pc)row.push('');row[pc]=price;
       if(oldRow){sh.getRange(oldRow+1,1,1,row.length).setValues([row]);updated++;}
       else {sh.appendRow(row);added++;index[key]=sh.getLastRow()-1;}
     });
@@ -349,16 +330,18 @@ function saveSessionCount(token, data) {
   const inv=sessions.find(r=>String(r[0])===sessionId);
   if(!inv) throw new Error('عملية الجرد غير موجودة.');
   if(String(inv[4])!=='open') throw new Error('عملية الجرد مغلقة ولا تقبل حركات جديدة.');
-  const catalog=ss.getSheetByName('Items').getDataRange().getValues().slice(1);
-  const item=catalog.find(r=>(r[6]===true||String(r[6]).toLowerCase()==='true')&&(String(r[2]||'').trim().toLowerCase()===code.toLowerCase()||String(r[1]||'').trim().toLowerCase()===code.toLowerCase()));
-  if(!item) throw new Error('الصنف غير موجود في الملف الرئيسي.');
+  const itemsSheet=ss.getSheetByName('Items');let catalog=itemsSheet.getDataRange().getValues().slice(1);
+  let item=catalog.find(r=>(r[6]===true||String(r[6]).toLowerCase()==='true')&&(String(r[2]||'').trim().toLowerCase()===code.toLowerCase()||String(r[1]||'').trim().toLowerCase()===code.toLowerCase()));
+  if(!item&&String(data.name||'').trim()){adminCreateInventoryItemDuringCount(token,{code,name:data.name,barcode:data.barcode||'',price:data.price||0});catalog=itemsSheet.getDataRange().getValues().slice(1);item=catalog.find(r=>String(r[2]||'').trim().toLowerCase()===code.toLowerCase());}
+  if(!item)throw new Error('الصنف غير موجود. أدخل اسم الصنف لإضافته أثناء الجرد.');
+  const pc=ensureItemPriceColumn_(),finalPrice=Number(data.price||item[pc]||0);
   const lock=LockService.getScriptLock(); lock.waitLock(20000);
   try {
     const sh=ensureInventoryExtraColumns_(), id=Utilities.getUuid();
     const expiry=String(data.expiry||'').trim(), batch=String(data.batch||'').trim();
     const branch=ss.getSheetByName('Branches').getDataRange().getValues().slice(1).find(r=>String(r[0])===String(inv[1]));
     const warehouse=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1).find(r=>String(r[0])===String(inv[2]));
-    const row=[id,sessionId,item[0],item[2],item[3],qty,price,expiry,branch?String(branch[1]):String(inv[1]),s.username,new Date(),String(data.notes||'').slice(0,300),String(inv[2]),warehouse?String(warehouse[2]):'',batch,expiry];
+    const row=[id,sessionId,item[0],item[2],item[3],qty,finalPrice,expiry,branch?String(branch[1]):String(inv[1]),s.username,new Date(),String(data.notes||'').slice(0,300),String(inv[2]),warehouse?String(warehouse[2]):'',batch,expiry];
     sh.appendRow(row);
     audit_(s.username,'CREATE','InventoryLines',id,'session='+sessionId+'; code='+item[2]+'; qty='+qty);
     return {ok:true,id,itemName:String(item[3])};
@@ -471,3 +454,6 @@ function getStockVarianceReport(token, sessionId) {
   const rows=Object.keys(map).map(k=>{const x=map[k],difference=x.countedQty-x.openingQty;return Object.assign({},x,{difference,openingValue:x.openingQty*x.price,countedValue:x.countedQty*x.price,differenceValue:difference*x.price});});
   return {session:{id:String(inv[0]),name:String(inv[3]),branchId:String(inv[1]),warehouseId:String(inv[2])},rows,totalItems:rows.length,totalOpeningValue:rows.reduce((a,x)=>a+x.openingValue,0),totalCountedValue:rows.reduce((a,x)=>a+x.countedValue,0),totalDifferenceValue:rows.reduce((a,x)=>a+x.differenceValue,0),matchedOpeningRows:balances.length,countedLines:counted.length};
 }
+
+function ensureItemPriceColumn_(){const sh=db_().getSheetByName('Items');let hs=sh.getRange(1,1,1,Math.max(8,sh.getLastColumn())).getValues()[0],i=hs.findIndex(x=>String(x||'').trim()==='unit_price');if(i<0){i=hs.length;sh.getRange(1,i+1).setValue('unit_price');}return i;}
+function adminCreateInventoryItemDuringCount(token,item){const s=session_(token);requireRole_(s,['admin','supervisor','employee']);if(s.mustChange)throw new Error('يجب تغيير كلمة المرور أولاً.');item=item||{};const code=String(item.code||'').trim(),name=String(item.name||'').trim(),barcode=String(item.barcode||'').trim(),price=Number(item.price||0);if(!code||!name||!Number.isFinite(price)||price<0)throw new Error('أدخل الكود والاسم والسعر بشكل صحيح.');const sh=db_().getSheetByName('Items'),rows=sh.getDataRange().getValues(),old=rows.find(r=>String(r[2]||'').trim().toLowerCase()===code.toLowerCase());if(old)return {ok:true,created:false};const pc=ensureItemPriceColumn_(),row=[Utilities.getUuid(),barcode,code,name,String(item.unit||''),String(item.category||''),true,new Date()];while(row.length<pc)row.push('');row[pc]=price;sh.appendRow(row);audit_(s.username,'CREATE_DURING_COUNT','Items',row[0],'code='+code);return {ok:true,created:true};}
