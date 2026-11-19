@@ -162,7 +162,7 @@ function adminCreateUser(token,username,password,role) {
 }
 function adminListUsers(token) {
   const s=session_(token); requireRole_(s,['admin']);
-  return userRows_().map(u=>({id:u.id,username:u.username,role:u.role,active:u.active,mustChangePassword:u.mustChange}));
+  const cols=ensureUserScopeColumns_(),sh=db_().getSheetByName('Users');return userRows_().map(u=>({id:u.id,username:u.username,role:u.role,active:u.active,mustChangePassword:u.mustChange,branchIds:String(sh.getRange(u.row,cols.branchCol).getValue()||''),warehouseIds:String(sh.getRange(u.row,cols.warehouseCol).getValue()||'')}));
 }
 function adminSetUserActive(token,userId,active) {
   const s=session_(token); requireRole_(s,['admin']);
@@ -260,7 +260,7 @@ function listInventorySessions(token) {
   const wid=col(warehouses,'warehouse_id',0), wb=col(warehouses,'branch_id',1), wn=col(warehouses,'warehouse_name',2);
   const lid=col(lines,'session_id',1);
   const branchRows=branches.rows, warehouseRows=warehouses.rows, lineRows=lines.rows;
-  const result=sessions.rows.filter(r=>String(r[sid]||'').trim()).map(r=>{
+  const result=sessions.rows.filter(r=>String(r[sid]||'').trim()&&scopeAllows_(current,String(r[sb]||''),String(r[sw]||''))).map(r=>{
     const id=String(r[sid]).trim(), branchId=String(r[sb]||'').trim(), warehouseId=String(r[sw]||'').trim();
     const br=branchRows.find(x=>String(x[bid]||'').trim()===branchId);
     const wh=warehouseRows.find(x=>String(x[wid]||'').trim()===warehouseId && String(x[wb]||'').trim()===branchId);
@@ -329,6 +329,7 @@ function saveSessionCount(token, data) {
   const ss=db_(), sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1);
   const inv=sessions.find(r=>String(r[0])===sessionId);
   if(!inv) throw new Error('عملية الجرد غير موجودة.');
+  if(!scopeAllows_(s,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لهذا الفرع أو المخزن.');
   if(String(inv[4])!=='open') throw new Error('عملية الجرد مغلقة ولا تقبل حركات جديدة.');
   const itemsSheet=ss.getSheetByName('Items');let catalog=itemsSheet.getDataRange().getValues().slice(1);
   let item=catalog.find(r=>(r[6]===true||String(r[6]).toLowerCase()==='true')&&(String(r[2]||'').trim().toLowerCase()===code.toLowerCase()||String(r[1]||'').trim().toLowerCase()===code.toLowerCase()));
@@ -348,7 +349,8 @@ function saveSessionCount(token, data) {
   } finally { lock.releaseLock(); }
 }
 function listSessionLines(token, sessionId) {
-  session_(token);
+  const current=session_(token);
+  const sessions=db_().getSheetByName('InventorySessions').getDataRange().getValues().slice(1),inv=sessions.find(r=>String(r[0])===String(sessionId));if(!inv||!scopeAllows_(current,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لهذا الفرع أو المخزن.');
   const rows=db_().getSheetByName('InventoryLines').getDataRange().getValues().slice(1);
   return rows.filter(r=>r[0]&&String(r[1])===String(sessionId)).map(r=>({id:String(r[0]),code:String(r[3]||''),name:String(r[4]||''),qty:Number(r[5]||0),price:Number(r[6]||0),expiry:String(r[15]||r[7]||''),batch:String(r[14]||''),employee:String(r[9]||''),time:r[10]})).reverse();
 }
@@ -446,6 +448,7 @@ function adminImportOpeningBalances(token, branchId, warehouseId, items) {
 function getStockVarianceReport(token, sessionId) {
   session_(token);const ss=db_(),sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1),inv=sessions.find(r=>String(r[0])===String(sessionId));
   if(!inv)throw new Error('عملية الجرد غير موجودة.');
+  const current=session_(token);if(!scopeAllows_(current,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لهذا الفرع أو المخزن.');
   const balances=openingBalancesSheet_().getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(inv[1])&&String(r[2])===String(inv[2]));
   const counted=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(sessionId)),map={};
   const keyOf=(c,e,b)=>[c,e,b].map(x=>String(x||'').trim()).join('\u001f');
@@ -457,3 +460,8 @@ function getStockVarianceReport(token, sessionId) {
 
 function ensureItemPriceColumn_(){const sh=db_().getSheetByName('Items');let hs=sh.getRange(1,1,1,Math.max(8,sh.getLastColumn())).getValues()[0],i=hs.findIndex(x=>String(x||'').trim()==='unit_price');if(i<0){i=hs.length;sh.getRange(1,i+1).setValue('unit_price');}return i;}
 function adminCreateInventoryItemDuringCount(token,item){const s=session_(token);requireRole_(s,['admin','supervisor','employee']);if(s.mustChange)throw new Error('يجب تغيير كلمة المرور أولاً.');item=item||{};const code=String(item.code||'').trim(),name=String(item.name||'').trim(),barcode=String(item.barcode||'').trim(),price=Number(item.price||0);if(!code||!name||!Number.isFinite(price)||price<0)throw new Error('أدخل الكود والاسم والسعر بشكل صحيح.');const sh=db_().getSheetByName('Items'),rows=sh.getDataRange().getValues(),old=rows.find(r=>String(r[2]||'').trim().toLowerCase()===code.toLowerCase());if(old)return {ok:true,created:false};const pc=ensureItemPriceColumn_(),row=[Utilities.getUuid(),barcode,code,name,String(item.unit||''),String(item.category||''),true,new Date()];while(row.length<pc)row.push('');row[pc]=price;sh.appendRow(row);audit_(s.username,'CREATE_DURING_COUNT','Items',row[0],'code='+code);return {ok:true,created:true};}
+
+function ensureUserScopeColumns_(){const sh=db_().getSheetByName('Users');let hs=sh.getRange(1,1,1,Math.max(9,sh.getLastColumn())).getValues()[0],b=hs.findIndex(x=>String(x||'').trim()==='allowed_branch_ids');if(b<0){b=hs.length;sh.getRange(1,b+1).setValue('allowed_branch_ids');}hs=sh.getRange(1,1,1,Math.max(9,sh.getLastColumn())).getValues()[0];let w=hs.findIndex(x=>String(x||'').trim()==='allowed_warehouse_ids');if(w<0){w=hs.length;sh.getRange(1,w+1).setValue('allowed_warehouse_ids');}return {branchCol:b+1,warehouseCol:w+1};}
+function userScope_(username){const sh=db_().getSheetByName('Users'),cols=ensureUserScopeColumns_(),r=sh.getDataRange().getValues().slice(1).find(x=>String(x[1])===String(username));return {branches:r?String(r[cols.branchCol-1]||'').split(',').map(x=>x.trim()).filter(Boolean):[],warehouses:r?String(r[cols.warehouseCol-1]||'').split(',').map(x=>x.trim()).filter(Boolean):[]};}
+function scopeAllows_(s,b,w){if(['admin','supervisor'].includes(s.role))return true;const x=userScope_(s.username);return x.branches.includes(String(b))&&x.warehouses.includes(String(w));}
+function adminSetUserScope(token,userId,branchIds,warehouseIds){const s=session_(token);requireRole_(s,['admin']);const u=userRows_().find(x=>x.id===String(userId));if(!u)throw new Error('المستخدم غير موجود.');const ss=db_(),bs=ss.getSheetByName('Branches').getDataRange().getValues().slice(1),ws=ss.getSheetByName('Warehouses').getDataRange().getValues().slice(1),b=Array.from(new Set(String(branchIds||'').split(',').map(x=>x.trim()).filter(Boolean))),w=Array.from(new Set(String(warehouseIds||'').split(',').map(x=>x.trim()).filter(Boolean)));if(b.some(id=>!bs.some(r=>String(r[0])===id&&(r[2]===true||String(r[2]).toLowerCase()==='true'))))throw new Error('كود فرع غير صحيح أو غير نشط.');if(w.some(id=>!ws.some(r=>String(r[0])===id&&b.includes(String(r[1]))&&(r[3]===true||String(r[3]).toLowerCase()==='true'))))throw new Error('المخزن غير صحيح أو لا يتبع الفروع المحددة.');const cols=ensureUserScopeColumns_(),sh=ss.getSheetByName('Users');sh.getRange(u.row,cols.branchCol).setValue(b.join(','));sh.getRange(u.row,cols.warehouseCol).setValue(w.join(','));audit_(s.username,'UPDATE_SCOPE','Users',userId,'branches='+b.join(',')+'; warehouses='+w.join(','));return {ok:true};}
