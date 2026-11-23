@@ -472,6 +472,26 @@ function adminImportOpeningBalances(token, branchId, warehouseId, items, session
   if(!inv||String(inv[1])!==branchId||String(inv[2])!==warehouseId||String(inv[4])!=='open') throw new Error('عملية الجرد غير صحيحة أو مغلقة أو لا تطابق الفرع والمخزن.');
   const sessionMode=String(inv[7]||'opening_balance'); if(sessionMode!==mode) throw new Error('نوع الملف لا يطابق نوع عملية الجرد المختارة.');
   if(mode==='no_opening_balance') items=items.map(x=>Object.assign({},x,{qty:0}));
+  // Keep every imported branch item available to the counting screen's catalog lookup.
+  const itemsSh=ss.getSheetByName('Items'), priceCol=ensureItemPriceColumn_(), itemRows=itemsSh.getDataRange().getValues(), itemIndex={};
+  itemRows.slice(1).forEach((r,i)=>{const k=String(r[2]||'').trim().toLowerCase();if(k&&!itemIndex[k])itemIndex[k]=i+2;});
+  let catalogAdded=0,catalogUpdated=0;
+  const catalogSeen={};
+  items.forEach(it=>{
+    const code=String(it.code||'').trim(),name=String(it.name||'').trim(),price=Number(it.price||0),key=code.toLowerCase();
+    if(!code||!name||catalogSeen[key])return;catalogSeen[key]=true;
+    const rowNo=itemIndex[key];
+    if(rowNo){
+      const old=itemRows[rowNo-1],row=old.slice();
+      while(row.length<=priceCol)row.push('');
+      row[0]=row[0]||Utilities.getUuid();row[1]=row[1]||code;row[2]=code;row[3]=name;row[6]=true;row[7]=new Date();row[priceCol]=price;
+      itemsSh.getRange(rowNo,1,1,priceCol+1).setValues([row.slice(0,priceCol+1)]);catalogUpdated++;
+    }else{
+      const row=Array(priceCol+1).fill('');
+      row[0]=Utilities.getUuid();row[1]=code;row[2]=code;row[3]=name;row[4]='';row[5]='';row[6]=true;row[7]=new Date();row[priceCol]=price;
+      itemsSh.appendRow(row);catalogAdded++;
+    }
+  });
   const sh=openingBalancesSheet_(), values=sh.getDataRange().getValues(), index={};
   values.slice(1).forEach((r,i)=>{const k=[r[11],r[3],r[7],r[8]].map(x=>String(x||'').trim().toLowerCase()).join('|');if(k!=='||||')index[k]=i+2;});
   const seen={}, updates=[], adds=[]; let skipped=0;
@@ -484,8 +504,8 @@ function adminImportOpeningBalances(token, branchId, warehouseId, items, session
   });
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try{updates.forEach(x=>sh.getRange(x.row,1,1,x.data.length).setValues([x.data]));if(adds.length)sh.getRange(sh.getLastRow()+1,1,adds.length,adds[0].length).setValues(adds);
-    audit_(s.username,'IMPORT','OpeningBalances',sessionId,'mode='+mode+'; updated='+updates.length+'; added='+adds.length+'; skipped='+skipped);
-    return {ok:true,added:adds.length,updated:updates.length,skipped};
+    audit_(s.username,'IMPORT','OpeningBalances',sessionId,'mode='+mode+'; updated='+updates.length+'; added='+adds.length+'; skipped='+skipped+'; catalogAdded='+catalogAdded+'; catalogUpdated='+catalogUpdated);
+    return {ok:true,added:adds.length,updated:updates.length,skipped,catalogAdded,catalogUpdated};
   }finally{lock.releaseLock();}
 }
 function getStockVarianceReport(token, sessionId) {
