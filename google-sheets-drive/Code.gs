@@ -465,8 +465,8 @@ function getStockVarianceReport(token, sessionId) {
   if(!inv)throw new Error('عملية الجرد غير موجودة.');
   const current=session_(token);if(!scopeAllows_(current,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لهذا الفرع أو المخزن.');
   const balanceRows=openingBalancesSheet_().getDataRange().getValues().slice(1);
-  const hasSessionScoped=balanceRows.some(r=>String(r[11]||'')===String(sessionId));
-  const balances=balanceRows.filter(r=>hasSessionScoped?String(r[11]||'')===String(sessionId):(String(r[1])===String(inv[1])&&String(r[2])===String(inv[2])&&!r[11]));
+  const isNewScopedSession=!!String(inv[7]||'');
+  const balances=balanceRows.filter(r=>isNewScopedSession?String(r[11]||'')===String(sessionId):(String(r[1])===String(inv[1])&&String(r[2])===String(inv[2])&&!r[11]));
   const counted=ss.getSheetByName('InventoryLines').getDataRange().getValues().slice(1).filter(r=>String(r[1])===String(sessionId)),map={};
   const keyOf=(c,e,b)=>[String(c||'').trim().toLowerCase(),String(e||'').trim(),String(b||'').trim()].join('\u001f');
   balances.forEach(r=>{const code=String(r[3]||''),expiry=String(r[7]||''),batch=String(r[8]||''),key=keyOf(code,expiry,batch);if(!map[key])map[key]={code,name:String(r[4]||''),expiry,batch,openingQty:0,countedQty:0,price:Number(r[6]||0),counted:false};map[key].openingQty+=Number(r[5]||0);if(!map[key].price)map[key].price=Number(r[6]||0);});
