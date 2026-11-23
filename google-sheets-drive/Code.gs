@@ -177,7 +177,24 @@ function adminSetUserActive(token,userId,active) {
 function listCatalog(token) {session_(token);const pc=ensureItemPriceColumn_(),rows=db_().getSheetByName('Items').getDataRange().getValues().slice(1),seen=new Set(),out=[];rows.forEach(r=>{const code=String(r[2]||'').trim().toLowerCase();if(!r[0]||!(r[6]===true||String(r[6]).toLowerCase()==='true')||!code||seen.has(code))return;seen.add(code);out.push({id:String(r[0]),barcode:String(r[1]||''),code:String(r[2]||''),name:String(r[3]||''),unit:String(r[4]||''),category:String(r[5]||''),price:Number(r[pc]||0)});});return out;}
 function adminDeleteItem(token,itemId){const s=session_(token);requireRole_(s,['admin']);const sh=db_().getSheetByName('Items'),v=sh.getDataRange().getValues(),i=v.findIndex((r,n)=>n>0&&String(r[0])===String(itemId));if(i<1)throw new Error('الصنف غير موجود.');sh.getRange(i+1,7).setValue(false);sh.getRange(i+1,8).setValue(new Date());audit_(s.username,'DEACTIVATE','Items',itemId,'تم إخفاء الصنف مع الاحتفاظ بحركاته التاريخية.');return {ok:true};}
 function adminDeleteInventorySession(token,sessionId){const s=session_(token);requireRole_(s,['admin']);const ss=db_(),sessions=ss.getSheetByName('InventorySessions'),sv=sessions.getDataRange().getValues(),i=sv.findIndex((r,n)=>n>0&&String(r[0])===String(sessionId));if(i<1)throw new Error('عملية الجرد غير موجودة.');const inv=sv[i],lines=ss.getSheetByName('InventoryLines'),lv=lines.getDataRange().getValues(),matching=lv.slice(1).filter(r=>String(r[1])===String(sessionId)).length;for(let n=lv.length-1;n>0;n--)if(String(lv[n][1])===String(sessionId))lines.deleteRow(n+1);sessions.deleteRow(i+1);audit_(s.username,'DELETE_SESSION','InventorySessions',sessionId,'branch='+inv[1]+'; warehouse='+inv[2]+'; deletedLines='+matching);return {ok:true};}
-function adminUpdateInventoryLine(token,lineId,data){const s=session_(token);requireRole_(s,['admin','supervisor']);data=data||{};const ss=db_(),sh=ss.getSheetByName('InventoryLines'),v=sh.getDataRange().getValues(),i=v.findIndex((r,n)=>n>0&&String(r[0])===String(lineId));if(i<1)throw new Error('حركة الجرد غير موجودة.');const row=v[i],sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1),inv=sessions.find(x=>String(x[0])===String(row[1]));if(!inv||!scopeAllows_(s,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لتعديل هذه الحركة.');if(String(inv[4])!=='open')throw new Error('لا يمكن تعديل حركة في عملية جرد مغلقة.');const code=String(data.code||row[3]||'').trim(),name=String(data.name||row[4]||'').trim(),qty=Number(data.qty),price=Number(data.price);if(!code||!name||data.qty===null||String(data.qty).trim()===''||!Number.isFinite(qty)||!Number.isFinite(price)||price<0)throw new Error('راجع الكود والاسم والكمية والسعر.');row[3]=code;row[4]=name;row[5]=qty;row[6]=price;row[7]=String(data.expiry||'').trim();row[14]=String(data.batch||'').trim();row[15]=row[7];sh.getRange(i+1,1,1,Math.max(16,row.length)).setValues([row]);audit_(s.username,'UPDATE','InventoryLines',lineId,'code='+code+'; qty='+qty+'; price='+price);return {ok:true};}
+function adminUpdateInventoryLine(token,lineId,data){
+  const s=session_(token);requireRole_(s,['admin','supervisor']);data=data||{};
+  const ss=db_(),sh=ss.getSheetByName('InventoryLines'),v=sh.getDataRange().getValues();
+  const i=v.findIndex((r,n)=>n>0&&String(r[0])===String(lineId));
+  if(i<1)throw new Error('حركة الجرد غير موجودة.');
+  const row=v[i],sessions=ss.getSheetByName('InventorySessions').getDataRange().getValues().slice(1),inv=sessions.find(x=>String(x[0])===String(row[1]));
+  if(!inv||!scopeAllows_(s,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لتعديل هذه الحركة.');
+  if(String(inv[4])!=='open')throw new Error('لا يمكن تعديل حركة في عملية جرد مغلقة.');
+  const code=String(data.code||row[3]||'').trim(),name=String(data.name||row[4]||'').trim(),qty=Number(data.qty),price=Number(data.price);
+  if(!code||!name||data.qty===null||typeof data.qty==='undefined'||String(data.qty).trim()===''||!Number.isFinite(qty)||!Number.isFinite(price)||price<0)throw new Error('راجع الكود والاسم والكمية والسعر.');
+  const before={code:String(row[3]||''),name:String(row[4]||''),qty:Number(row[5]||0),price:Number(row[6]||0),expiry:String(row[15]||row[7]||''),batch:String(row[14]||'')};
+  const after={code,name,qty,price,expiry:String(data.expiry||'').trim(),batch:String(data.batch||'').trim()};
+  const item=ss.getSheetByName('Items').getDataRange().getValues().slice(1).find(r=>String(r[2]||'').trim().toLowerCase()===code.toLowerCase()&&(r[6]===true||String(r[6]).toLowerCase()==='true'));
+  row[2]=item?item[0]:String(row[2]||'');row[3]=code;row[4]=name;row[5]=qty;row[6]=price;row[7]=after.expiry;row[14]=after.batch;row[15]=after.expiry;
+  sh.getRange(i+1,1,1,Math.max(16,row.length)).setValues([row]);
+  audit_(s.username,'UPDATE','InventoryLines',lineId,'BEFORE='+JSON.stringify(before)+' | AFTER='+JSON.stringify(after));
+  return {ok:true,previous:before,current:after};
+}
 function adminSaveItem(token,item){const s=session_(token);requireRole_(s,['admin']);item=item||{};const code=String(item.code||'').trim(),name=String(item.name||'').trim(),price=Number(item.price||0);if(!code||!name||!Number.isFinite(price)||price<0)throw new Error('كود الصنف واسمه وسعره مطلوبون بشكل صحيح.');const sh=db_().getSheetByName('Items'),v=sh.getDataRange().getValues(),i=v.findIndex((r,n)=>n>0&&String(r[2]||'').trim().toLowerCase()===code.toLowerCase()),old=i>0?v[i]:[],pc=ensureItemPriceColumn_(),row=[i>0?old[0]:Utilities.getUuid(),String(item.barcode||old[1]||'').trim(),code,name,String(item.unit||old[4]||''),String(item.category||old[5]||''),true,new Date()];while(row.length<pc)row.push('');row[pc]=price;if(i>0)sh.getRange(i+1,1,1,row.length).setValues([row]);else sh.appendRow(row);audit_(s.username,i>0?'UPDATE':'CREATE','Items',row[0],'code='+code+'; price='+price);return {ok:true,updated:i>0};}
 function adminImportItems(token,items) {
   const s=session_(token); requireRole_(s,['admin']);
@@ -359,6 +376,17 @@ function listSessionLines(token, sessionId) {
   const sessions=db_().getSheetByName('InventorySessions').getDataRange().getValues().slice(1),inv=sessions.find(r=>String(r[0])===String(sessionId));if(!inv||!scopeAllows_(current,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لهذا الفرع أو المخزن.');
   const rows=db_().getSheetByName('InventoryLines').getDataRange().getValues().slice(1);
   return rows.filter(r=>r[0]&&String(r[1])===String(sessionId)).map(r=>({id:String(r[0]),code:String(r[3]||''),name:String(r[4]||''),qty:Number(r[5]||0),price:Number(r[6]||0),expiry:String(r[15]||r[7]||''),batch:String(r[14]||''),employee:String(r[9]||''),time:r[10]})).reverse();
+}
+function adminBulkDeleteItems(token,itemIds){
+  const s=session_(token);requireRole_(s,['admin']);
+  if(!Array.isArray(itemIds)||!itemIds.length)throw new Error('حدد صنفاً واحداً على الأقل.');
+  const ids=[...new Set(itemIds.map(x=>String(x||'').trim()).filter(Boolean))];
+  if(ids.length>500)throw new Error('الحد الأقصى 500 صنف في العملية الواحدة.');
+  const sh=db_().getSheetByName('Items'),values=sh.getDataRange().getValues(),wanted=new Set(ids),now=new Date();
+  let changed=0;const changedIds=[];
+  values.forEach((r,i)=>{if(i>0&&wanted.has(String(r[0]))&&(r[6]===true||String(r[6]).toLowerCase()==='true')){sh.getRange(i+1,7,1,2).setValues([[false,now]]);changed++;changedIds.push(String(r[0]));}});
+  audit_(s.username,'BULK_DEACTIVATE','Items',changedIds.join(','),'count='+changed+'; logical deactivation; history preserved');
+  return {ok:true,changed};
 }
 function adminDeleteInventoryLine(token, lineId) {
   const s=session_(token); requireRole_(s,['admin','supervisor']);
