@@ -239,7 +239,7 @@ function ensureInventoryExtraColumns_() {
   return sh;
 }
 function listInventorySessions(token) {
-  session_(token);
+  const current=session_(token);
   const ss=db_();
   const sessionSheet=ss.getSheetByName('InventorySessions');
   const branchSheet=ss.getSheetByName('Branches');
@@ -362,7 +362,8 @@ function adminDeleteInventoryLine(token, lineId) {
   const sh=db_().getSheetByName('InventoryLines'), values=sh.getDataRange().getValues();
   const idx=values.findIndex((r,i)=>i>0&&String(r[0])===String(lineId));
   if(idx<1) throw new Error('حركة الجرد غير موجودة.');
-  sh.deleteRow(idx+1); audit_(s.username,'DELETE','InventoryLines',lineId,''); return {ok:true};
+  const row=values[idx],inv=db_().getSheetByName('InventorySessions').getDataRange().getValues().slice(1).find(x=>String(x[0])===String(row[1]));if(!inv||!scopeAllows_(s,String(inv[1]),String(inv[2])))throw new Error('ليس لديك صلاحية لحذف هذه الحركة.');if(String(inv[4])!=='open')throw new Error('لا يمكن حذف حركة من عملية جرد مغلقة.');
+  sh.deleteRow(idx+1); audit_(s.username,'DELETE','InventoryLines',lineId,'session='+row[1]); return {ok:true};
 }
 function getDashboardStats(token) {
   const s=session_(token), ss=db_();
