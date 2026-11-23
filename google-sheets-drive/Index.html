@@ -171,7 +171,7 @@ function renderCatalog(){
  $('catalogRows').innerHTML=catalog.filter(x=>x&&(x.code+' '+x.name+' '+x.barcode).toLowerCase().includes(q)).slice(0,500).map(x=>
  '<tr>'+(me&&me.role==='admin'?'<td><input type="checkbox" class="catalogPick" value="'+esc(x.id)+'"></td>':'')+
  '<td>'+esc(x.code)+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.barcode)+'</td><td>'+esc(x.unit)+'</td><td>'+esc(x.category)+'</td><td>'+Number(x.price||0).toFixed(2)+'</td><td>'+
- (me&&me.role==='admin'?'<button class="danger" onclick="deleteCatalogItem(\\''+esc(x.id)+'\\')">حذف</button>':'-')+'</td></tr>').join('');
+ (me&&me.role==='admin'?'<button class="danger" onclick="deleteCatalogItem(\''+esc(x.id)+'\')">حذف</button>':'-')+'</td></tr>').join('');
 }
 function saveCatalogItem(){const d={code:$('itemCode').value,name:$('itemName').value,barcode:$('itemBarcode').value,unit:$('itemUnit').value,category:$('itemCategory').value,price:$('itemPrice').value};run('adminSaveItem',[token,d],r=>{msg('catalogMessage',r.updated?'تم تحديث الصنف':'تمت إضافة الصنف');loadCatalog()},e=>msg('catalogMessage',e))}
 function parseCSV(t){const rows=[];let row=[],cell='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c==='"'&&t[i+1]==='"'){cell+='"';i++}else if(c==='"')q=false;else cell+=c}else if(c==='"')q=true;else if(c===','){row.push(cell);cell=''}else if(c==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell=''}else cell+=c}row.push(cell.replace(/\r$/,''));if(row.some(x=>x!==''))rows.push(row);return rows}
