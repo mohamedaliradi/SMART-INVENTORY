@@ -84,7 +84,7 @@ function userRows_() {
   return values.slice(1).map((r,i)=>({row:i+2,id:r[0],username:String(r[1]),hash:String(r[2]),salt:String(r[3]),role:String(r[4]),active:r[5]===true||String(r[5]).toLowerCase()==='true',mustChange:r[6]===true||String(r[6]).toLowerCase()==='true'}));
 }
 function audit_(actor,action,entity,entityId,details) {
-  db_().getSheetByName('AuditLog').appendRow([Utilities.getUuid(),actor,action,entity,entityId,new Date(),String(details||'').slice(0,500)]);
+  db_().getSheetByName('AuditLog').appendRow([Utilities.getUuid(),actor,action,entity,entityId,new Date(),String(details||'').slice(0,4000)]);
 }
 function login(username,password) {
   username=String(username||'').trim().toLowerCase(); password=String(password||'');
